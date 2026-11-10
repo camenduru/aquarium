@@ -1,5 +1,7 @@
 # Aquarium
 
+https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
+
 A transparent desktop fish tank for Windows. A frameless, click-through-per-pixel
 window floats above the desktop and swims procedurally generated fish in it: no
 background, no title bar, no taskbar button.
@@ -171,5 +173,5 @@ Windows, so the transparency setup can be verified rather than assumed.
 
 ## Credits
 
-- Fish generator: `fish-gen` (MIT) as ported to `RoguelikeGame/src/creature/sea`.
-- Transparent-window recipe: VRMPet.
+- Fish generator: [fish-gen](https://github.com/JacobKulberg/fish-gen) (MIT) as ported to `RoguelikeGame/src/creature/sea`.
+- Transparent-window recipe: [VRMPet](https://github.com/camenduru/VRMPet).
