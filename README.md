@@ -48,6 +48,76 @@ Sheets are rendered on a worker thread (a 64 px sheet is seconds of
 supersampled rendering), so the window appears immediately and fish arrive one
 by one.
 
+## How a fish is drawn, in detail
+
+There is no GPU code in this project and there are no shaders. A fish is
+produced in three stages, and only the last one happens per frame.
+
+### 1. The sheet: once per fish, on a worker thread
+
+1. **Genome.** `MakeGenome(species, seed)` fills roughly 118 genes - body
+   profile, thickness, peak, nose, taper, all four fins, wings, arms, spines,
+   eyes, mouth, plus a colour block in HSV. `RandomGenome` invents the same
+   structure for the species that are not in the fixed roster.
+2. **Mesh.** `SeaGeometry` lofts a triangle mesh from those genes, and
+   `SeaAnimation` poses it per frame: a travelling swim wave down the body,
+   breathing, fin flap, tail beat, and the turn lag that makes a turning fish
+   bend nose-first.
+3. **Rasterize.** `SeaRaster` is an orthographic, z-buffered triangle
+   rasterizer. Every triangle is filled with barycentric weights and the nearest
+   depth wins, so overlapping geometry resolves correctly - a pectoral fin in
+   front of the flank, a ray's wing over its own body.
+4. **Shade.** `SeaRender` computes each pixel in C++: key light plus hemisphere
+   fill, Blinn specular (`pow(dot(N, H), shininess) * gloss`), rim light,
+   countershading, fin translucency, all 26 markings, scars, gill slits, the
+   mouth line and teeth. Eyes and urchin spines are camera-space overlays
+   stamped after the geometry pass, exactly where the reference does it.
+   The frame is rendered **4x supersampled** at this size and averaged down,
+   which is where the smooth silhouette comes from.
+5. **Quantize.** `SeaPixel` learns **one palette for the whole sheet**, so a
+   swimming fish cannot shimmer between two nearly identical blues frame to
+   frame, maps every frame onto it, and stamps a shared outline (one shade set
+   for the entire sheet) so the inner shading never bleeds off the silhouette.
+6. **Pack.** One cell per frame, `size x size` (64 here). Row = clip:
+   `swim_right`, `turn_right_to_left`, `swim_left`, `turn_left_to_right`
+   (+ two `puff` rows for a pufferfish). Column = frame. Frame count and fps
+   scale together with `smoothness`, so at 2 the base 8 swim frames become 16 at
+   20 fps. A 4-clip sheet is `maxFrames*64` by `clips*64` - 1280x256 for this
+   tank, about **1.2 MB of RGBA**, and takes **~1.7 s** to generate at 64 px on
+   this machine.
+
+### 2. The frame: every frame, on the main thread
+
+`Tank::Draw` walks the fish and blits one cell each:
+
+- the cell is `col = frame`, `row = clip row`, clipped to the sheet bounds;
+- the destination is `centre - (64*2)/2`, so a fish is positioned by its middle,
+  not its corner;
+- scaling is **integer nearest-neighbour** (`srcX = ox / 2`). There is no
+  sampler and no filtering - that division is the whole reason the art stays
+  crisp;
+- the blend is `BlendSprite`: straight-alpha RGBA in, premultiplied BGRA out,
+  integer src-over per channel,
+  `dst = src*a/255 + dst*(255-a)/255`, with the whole sprite scaled by its depth
+  alpha (230-255).
+
+Premultiplying matters: `UpdateLayeredWindow` with `AC_SRC_ALPHA` expects
+premultiplied colour, and feeding it straight alpha is what puts a bright halo
+around every sprite.
+
+### 3. The screen: once per frame, by Windows
+
+`Push()` hands the finished bitmap to `UpdateLayeredWindow(..., ULW_ALPHA)` at
+60 fps and the Desktop Window Manager composites it over the desktop. Because
+transparent pixels carry no colour at all, the desktop shows through them; the
+same alpha channel decides clicks, since `WM_NCHITTEST` answers `HTTRANSPARENT`
+below an alpha of 8 and `HTCLIENT` on anything more solid.
+
+Cost is CPU cycles per pixel touched, not GPU time: one fish at 2x covers
+128x128 = 16,384 pixels, so a 128-fish tank is about **2.1 million pixel blends
+per frame**. That is the budget this design spends in exchange for per-pixel
+alpha, which a Direct3D swap chain on an `HWND` cannot provide at all.
+
 ## Build
 
 ```
