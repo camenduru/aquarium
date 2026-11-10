@@ -96,18 +96,24 @@ void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
 
     std::mt19937 rng(uint32_t(seed ^ 0x9E3779B97F4A7C15ull));
 
+    // Shuffle the preset pool once per launch: which fish the tank opens
+    // with is then random every start instead of always the same species.
+    // Seeds from fresh launches are random too, so the genomes differ as well.
+    startOrder_.assign(kSpecies, kSpecies + kSpeciesCount);
+    std::shuffle(startOrder_.begin(), startOrder_.end(), rng);
+
     fish_.assign(size_t(fishCount), TankFish());
     for (int i = 0; i < fishCount; ++i)
     {
         TankFish& f = fish_[size_t(i)];
-        f.species   = i < kSpeciesCount ? kSpecies[i] : std::string("Random");
+        f.species   = i < kSpeciesCount ? startOrder_[size_t(i)] : std::string("Random");
         InitFish(f, rng);
     }
 
     pending_.clear();
     pending_.resize(size_t(fishCount));
     stop_.store(false);
-    workers_.emplace_back(&Tank::WorkerRange, this, 0, fishCount, false);
+    workers_.emplace_back(&Tank::WorkerRange, this, 0, fishCount, false, sea::u64(0), &startOrder_);
 }
 
 void Tank::Stop()
@@ -142,9 +148,11 @@ bool Tank::AddFish()
 
     const int index = int(fish_.size());
 
-    // The index feeds the seed, so clicking twice yields two different fish
-    // instead of the same one twice.
-    std::mt19937 rng(uint32_t(seed_ ^ (uint32_t(index) * 2654435761u) ^ 0x5DEECE66u));
+    // Fresh entropy per click: the newcomer is not tied to the tank seed or
+    // to how many fish already exist, so no run of clicks ever repeats.
+    const sea::u64 salt = salty_();
+
+    std::mt19937 rng(uint32_t(salt >> 32) ^ uint32_t(salt));
 
     TankFish added;
     added.species = "Random";
@@ -158,24 +166,32 @@ bool Tank::AddFish()
         pending_.resize(fish_.size());
     }
 
-    workers_.emplace_back(&Tank::WorkerRange, this, index, 1, true);
+    workers_.emplace_back(&Tank::WorkerRange, this, index, 1, true, salt,
+                          static_cast<const std::vector<const char*>*>(nullptr));
     return true;
 }
 
-void Tank::WorkerRange(int first, int count, bool randomSpecies)
+void Tank::WorkerRange(int first, int count, bool randomSpecies, sea::u64 randomSeed,
+                       const std::vector<const char*>* presets)
 {
     for (int n = 0; n < count && !stop_.load(); ++n)
     {
         const int index = first + n;
 
-        // The seed spread keeps two fish of the same species from being twins.
-        const sea::u64 fishSeed = seed_ + sea::u64(index) * 37 + 1;
+        // Random fish take the seed AddFish() drew from its entropy source,
+        // so two clicks can never agree; preset fish stay keyed to the tank
+        // seed, where the index spread keeps same-species twins apart.
+        const sea::u64 fishSeed = randomSpecies
+            ? randomSeed
+            : seed_ + sea::u64(index) * 37 + 1;
 
         sea::SeaGenome genome;
-        if (!randomSpecies && index < kSpeciesCount)
-            genome = sea::MakeGenome(kSpecies[index], fishSeed);
+        if (presets != nullptr && index < int(presets->size()))
+            genome = sea::MakeGenome((*presets)[size_t(index)], fishSeed);
         else
+        {
             genome = sea::RandomGenome(sea::SeaKind((unsigned(fishSeed) >> 3) % 7u), fishSeed);
+        }
 
         sea::SeaSpriteOptions options;
         options.size       = kCell;

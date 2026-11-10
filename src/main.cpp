@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -38,8 +39,16 @@ constexpr const wchar_t* kWindowTitle = L"Aquarium";
 
 Tank              g_tank;
 TransparentWindow g_window;
-int               g_fish    = 8;
-sea::u64          g_seed    = 7;
+/// A fresh seed at every launch, so each app open fills the tank with
+/// different fish. `--seed N` still overrides it for reproducible runs.
+sea::u64 FreshSeed()
+{
+    std::random_device device;
+    return (sea::u64(device()) << 32) ^ sea::u64(device());
+}
+
+int               g_fish    = 1;
+sea::u64          g_seed    = FreshSeed();
 int               g_seconds = 0;
 std::chrono::steady_clock::time_point g_start;
 

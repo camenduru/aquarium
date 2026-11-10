@@ -80,7 +80,8 @@ public:
 
 private:
     void InitFish(TankFish& f, std::mt19937& rng);
-    void WorkerRange(int first, int count, bool randomSpecies);
+    void WorkerRange(int first, int count, bool randomSpecies, sea::u64 randomSeed,
+                     const std::vector<const char*>* presets);
     void AdoptPending();
 
     std::vector<TankFish> fish_;
@@ -92,4 +93,12 @@ private:
     int       w_ = 0;
     int       h_ = 0;
     sea::u64  seed_ = 0;
+
+    /// Per-click entropy for AddFish(), seeded from the OS once at startup so
+    /// no two clicks within a process ever share a fish seed.
+    std::mt19937_64 salty_{ std::random_device{}() };
+
+    /// The preset pool shuffled once per launch, so a new tank opens with a
+    /// random pick instead of the same list order every time.
+    std::vector<const char*> startOrder_;
 };
