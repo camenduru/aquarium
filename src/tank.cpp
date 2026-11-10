@@ -92,7 +92,7 @@ void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
     w_ = std::max(width, 64);
     h_ = std::max(height, 64);
     seed_ = seed;
-    fishCount = std::clamp(fishCount, 1, 32);
+    fishCount = std::clamp(fishCount, 1, kMaxTankFish);
 
     std::mt19937 rng(uint32_t(seed ^ 0x9E3779B97F4A7C15ull));
 

@@ -291,7 +291,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         else if (a == "--width")      { take(v); width = std::atoi(v.c_str()); }
         else if (a == "--height")     { take(v); height = std::atoi(v.c_str()); }
     }
-    g_fish = std::clamp(g_fish, 1, 32);
+    g_fish = std::clamp(g_fish, 1, kMaxTankFish);
     width  = std::max(width, 320);
     height = std::max(height, 240);
 

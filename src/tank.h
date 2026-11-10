@@ -25,9 +25,10 @@
 #include <thread>
 #include <vector>
 
-/// Ceiling for AddFish(): the fixed roster is 8, and 16 sheets is as many
-/// as the tank keeps light enough to stay smooth.
-constexpr int kMaxTankFish = 16;
+/// Ceiling for AddFish(), and the limit Start() and --fish clamp to, so all
+/// three agree. Every fish is one resident sheet, so this is a memory and
+/// generation-time budget as much as a taste one.
+constexpr int kMaxTankFish = 128;
 
 struct TankFish
 {

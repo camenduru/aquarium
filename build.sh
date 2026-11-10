@@ -34,6 +34,15 @@ export LIB="$VSW/$TOOLSET/lib/x64;$KITSW/Lib/$SDK/ucrt/x64;$KITSW/Lib/$SDK/um/x6
 export PATH="$VS_VC_UNIX/$TOOLSET/bin/Hostx64/x64:$PATH"
 export MSYS2_ARG_CONV_EXCL='*'
 
+# The tank is usually left running while it is being worked on, and Windows
+# refuses to relink an executable that is still loaded (cl reports LNK1104),
+# so close ours first. Any other app called aquarium.exe goes too - the build
+# always produces this one, so that is the right trade.
+if taskkill /F /IM aquarium.exe >/dev/null 2>&1; then
+    echo "--- closed the running aquarium.exe so the link can replace it"
+    sleep 1
+fi
+
 OPT=/O2
 DEFS=''
 if [ "${1:-}" = "debug" ]; then
