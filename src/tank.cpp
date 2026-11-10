@@ -60,6 +60,31 @@ ClipView LookupClip(const sea::SeaSheet& sheet, int clip)
 
 } // namespace
 
+void Tank::InitFish(TankFish& f, std::mt19937& rng)
+{
+    std::uniform_real_distribution<double> ux(90.0, std::max(140.0, double(w_ - 90)));
+    std::uniform_real_distribution<double> uy(double(h_) * 0.20, double(h_) * 0.86);
+    std::uniform_real_distribution<double> us(26.0, 56.0);
+    std::uniform_real_distribution<double> ub(1.5, 3.5);
+    std::uniform_real_distribution<double> u01(0.0, 1.0);
+
+    f.x        = ux(rng);
+    f.baseY    = uy(rng);
+    f.y        = f.baseY;
+    f.speed    = us(rng);
+    f.dir      = (rng() & 1u) ? 1 : -1;
+    f.clip     = f.dir > 0 ? sea::ClipSwimRight : sea::ClipSwimLeft;
+    f.turning  = false;
+    f.clock    = u01(rng) * 1.2;
+    f.frame    = 0;
+    f.bobPhase = u01(rng) * 6.283185307179586;
+    f.bobAmp   = ub(rng);
+    f.bobSpeed = 0.55 + 0.75 * u01(rng);
+    f.scale    = 2;
+    f.alpha    = 230 + int(u01(rng) * 25.0);
+    f.ready    = false;
+}
+
 void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
 {
     Stop();
@@ -70,44 +95,28 @@ void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
     fishCount = std::clamp(fishCount, 1, 32);
 
     std::mt19937 rng(uint32_t(seed ^ 0x9E3779B97F4A7C15ull));
-    std::uniform_real_distribution<double> ux(90.0, std::max(140.0, double(w_ - 90)));
-    std::uniform_real_distribution<double> uy(double(h_) * 0.20, double(h_) * 0.86);
-    std::uniform_real_distribution<double> us(26.0, 56.0);
-    std::uniform_real_distribution<double> ub(1.5, 3.5);
-    std::uniform_real_distribution<double> u01(0.0, 1.0);
 
     fish_.assign(size_t(fishCount), TankFish());
     for (int i = 0; i < fishCount; ++i)
     {
-        TankFish& f  = fish_[size_t(i)];
-        f.species    = i < kSpeciesCount ? kSpecies[i] : std::string("Random");
-        f.x          = ux(rng);
-        f.baseY      = uy(rng);
-        f.y          = f.baseY;
-        f.speed      = us(rng);
-        f.dir        = (rng() & 1u) ? 1 : -1;
-        f.clip       = f.dir > 0 ? sea::ClipSwimRight : sea::ClipSwimLeft;
-        f.turning    = false;
-        f.clock      = u01(rng) * 1.2;
-        f.bobPhase   = u01(rng) * 6.283185307179586;
-        f.bobAmp     = ub(rng);
-        f.bobSpeed   = 0.55 + 0.75 * u01(rng);
-        f.scale      = 2;
-        f.alpha      = 230 + int(u01(rng) * 25.0);
-        f.ready      = false;
+        TankFish& f = fish_[size_t(i)];
+        f.species   = i < kSpeciesCount ? kSpecies[i] : std::string("Random");
+        InitFish(f, rng);
     }
 
     pending_.clear();
     pending_.resize(size_t(fishCount));
     stop_.store(false);
-    worker_ = std::thread(&Tank::Worker, this);
+    workers_.emplace_back(&Tank::WorkerRange, this, 0, fishCount, false);
 }
 
 void Tank::Stop()
 {
     stop_.store(true);
-    if (worker_.joinable())
-        worker_.join();
+    for (std::thread& t : workers_)
+        if (t.joinable())
+            t.join();
+    workers_.clear();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         pending_.clear();
@@ -126,16 +135,45 @@ void Tank::Resize(int width, int height)
     }
 }
 
-void Tank::Worker()
+bool Tank::AddFish()
 {
-    for (int i = 0; i < int(pending_.size()) && !stop_.load(); ++i)
+    if (fish_.empty() || int(fish_.size()) >= kMaxTankFish)
+        return false;   // not running, or the tank is already full
+
+    const int index = int(fish_.size());
+
+    // The index feeds the seed, so clicking twice yields two different fish
+    // instead of the same one twice.
+    std::mt19937 rng(uint32_t(seed_ ^ (uint32_t(index) * 2654435761u) ^ 0x5DEECE66u));
+
+    TankFish added;
+    added.species = "Random";
+    InitFish(added, rng);
+
+    // Unready fish are skipped by Update and Draw, so the newcomer is invisible
+    // until its sheet lands - and the tank never pauses in the meantime.
+    fish_.push_back(std::move(added));
     {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pending_.resize(fish_.size());
+    }
+
+    workers_.emplace_back(&Tank::WorkerRange, this, index, 1, true);
+    return true;
+}
+
+void Tank::WorkerRange(int first, int count, bool randomSpecies)
+{
+    for (int n = 0; n < count && !stop_.load(); ++n)
+    {
+        const int index = first + n;
+
         // The seed spread keeps two fish of the same species from being twins.
-        const sea::u64 fishSeed = seed_ + sea::u64(i) * 37 + 1;
+        const sea::u64 fishSeed = seed_ + sea::u64(index) * 37 + 1;
 
         sea::SeaGenome genome;
-        if (i < kSpeciesCount)
-            genome = sea::MakeGenome(kSpecies[i], fishSeed);
+        if (!randomSpecies && index < kSpeciesCount)
+            genome = sea::MakeGenome(kSpecies[index], fishSeed);
         else
             genome = sea::RandomGenome(sea::SeaKind((unsigned(fishSeed) >> 3) % 7u), fishSeed);
 
@@ -149,7 +187,8 @@ void Tank::Worker()
             continue;   // leave the slot empty: the fish simply never shows
 
         std::lock_guard<std::mutex> lock(mutex_);
-        pending_[size_t(i)] = std::move(sheet);
+        if (size_t(index) < pending_.size())
+            pending_[size_t(index)] = std::move(sheet);
     }
 }
 

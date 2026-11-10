@@ -71,6 +71,9 @@ void AttachParentConsole()
 
 void RestartTank(int width, int height)
 {
+    // Rebuild at the size the tank is now, so fish added from the menu are
+    // not silently dropped by a new tank.
+    g_fish = std::max(1, g_tank.FishCount());
     g_tank.Stop();
     g_seed += 101;
     g_tank.Start(width, height, g_seed, g_fish);
@@ -137,8 +140,9 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
 {
     HMENU menu = CreatePopupMenu();
     if (menu == nullptr) return;
+    const bool canAdd = g_tank.FishCount() < kMaxTankFish;
     AppendMenuW(menu, MF_STRING, 1, L"New tank  (Ctrl+Shift+N)");
-    AppendMenuW(menu, MF_STRING, 2, L"New tank, one more fish");
+    AppendMenuW(menu, MF_STRING | (canAdd ? 0u : MF_GRAYED), 2, L"Add a random fish");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 3, L"Quit  (Ctrl+Shift+Q)");
 
@@ -151,8 +155,7 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
         RestartTank(g_window.Width(), g_window.Height());
     else if (cmd == 2)
     {
-        g_fish = std::min(g_fish + 1, 16);
-        RestartTank(g_window.Width(), g_window.Height());
+        g_tank.AddFish();
     }
     else if (cmd == 3)
         PostMessageW(hwnd, WM_CLOSE, 0, 0);

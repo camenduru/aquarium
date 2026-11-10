@@ -80,7 +80,9 @@ Hotkeys (global, work while another app has focus):
 | `Ctrl+Shift+Q` | quit |
 | `Ctrl+Shift+N` | new tank (new seed) |
 
-Right-clicking a fish opens the same menu.
+Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
+animal is generated on a worker thread and appears in place, while the rest of
+the tank keeps swimming. It stops at 16 fish, where the entry greys out.
 
 `tools/probe_window.ps1` reads the layered/topmost/visible styles back out of
 Windows, so the transparency setup can be verified rather than assumed.

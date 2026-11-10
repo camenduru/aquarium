@@ -7,9 +7,11 @@
 // it is in; the sheet already contains the right-facing swim, the
 // left-facing swim and both turns, so nothing is mirrored at runtime.
 //
-// Sheets are built on a worker thread: a 64 px sheet is seconds of
+// Sheets are built on worker threads: a 64 px sheet is seconds of
 // supersampled rendering, and the window must appear immediately, so
-// fish arrive one at a time instead of blocking startup.
+// fish arrive one at a time instead of blocking startup. AddFish() takes
+// the same route, so a newcomer is generated while the rest of the tank
+// keeps swimming.
 // ================================================================
 
 #include "creature/sea/SeaSprite.h"
@@ -18,9 +20,14 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
+
+/// Ceiling for AddFish(): the fixed roster is 8, and 16 sheets is as many
+/// as the tank keeps light enough to stay smooth.
+constexpr int kMaxTankFish = 16;
 
 struct TankFish
 {
@@ -56,6 +63,12 @@ public:
     void Start(int width, int height, sea::u64 seed, int fishCount);
     void Stop();
 
+    /// Append one randomly generated fish and build its sheet on a worker
+    /// thread, leaving every other fish untouched. Draw/Update ignore it
+    /// until it is ready, so it simply appears. False when the tank is full
+    /// or not running.
+    bool AddFish();
+
     void Resize(int width, int height);
     void Update(double dt);
     void Draw(uint8_t* premultipliedBgra, int width, int height);
@@ -65,13 +78,14 @@ public:
     bool WaitAllReady(int timeoutMs);
 
 private:
-    void Worker();
+    void InitFish(TankFish& f, std::mt19937& rng);
+    void WorkerRange(int first, int count, bool randomSpecies);
     void AdoptPending();
 
     std::vector<TankFish> fish_;
     std::vector<std::unique_ptr<sea::SeaSheet>> pending_;
     mutable std::mutex mutex_;
-    std::thread worker_;
+    std::vector<std::thread> workers_;
     std::atomic<bool> stop_{ false };
 
     int       w_ = 0;
