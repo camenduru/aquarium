@@ -1,0 +1,32 @@
+# Build output
+/bin/
+/build/
+/out/
+
+# MSVC intermediates and link output
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.res
+*.tlog
+*.log
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+.vs/
+
+# Editors and OS
+.vscode/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
