@@ -1,6 +1,6 @@
 # Aquarium
 
-> **1.3 sextillion sea creatures. Never the same fish twice.**
+> **1.3 sextillion sea creatures, no third-party DLLs, in 665 KB.**
 
 https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
 
@@ -199,6 +199,10 @@ or, without CMake (MSVC only):
 ./build.ps1         # PowerShell, no bash needed
 bin/aquarium.exe
 ```
+
+The release build is one self-contained **665 KB** executable (`680,960 bytes`)
+with no third-party DLLs, no runtime install and no assets folder - the 1.3
+sextillion creatures are all generated inside it.
 
 ## Run
 
