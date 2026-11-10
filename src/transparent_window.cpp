@@ -9,6 +9,7 @@
 
 #include <windowsx.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace
@@ -102,6 +103,57 @@ void TransparentWindow::MoveTo(int x, int y)
         SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, 0, 0,
                      SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
     Push();
+}
+
+bool TransparentWindow::Resize(int width, int height, int x, int y)
+{
+    if (hwnd_ == nullptr) return false;
+    width  = std::max(width, 32);
+    height = std::max(height, 32);
+
+    HDC screen = GetDC(nullptr);
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth       = width;
+    bmi.bmiHeader.biHeight      = -height;   // top-down, like Create()
+    bmi.bmiHeader.biPlanes      = 1;
+    bmi.bmiHeader.biBitCount    = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void*   bits = nullptr;
+    HBITMAP bmp  = CreateDIBSection(screen, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HDC     dc   = CreateCompatibleDC(screen);
+    ReleaseDC(nullptr, screen);
+
+    // Build the new canvas before dropping the old one: if this fails the
+    // window keeps rendering into what it already has.
+    if (bmp == nullptr || dc == nullptr)
+    {
+        if (bmp != nullptr) DeleteObject(bmp);
+        if (dc != nullptr) DeleteDC(dc);
+        return false;
+    }
+    SelectObject(dc, bmp);
+
+    if (dc_ != nullptr && bmp_ != nullptr)
+        SelectObject(dc_, nullptr);
+    if (bmp_ != nullptr) DeleteObject(bmp_);
+    if (dc_ != nullptr) DeleteDC(dc_);
+
+    dc_   = dc;
+    bmp_  = bmp;
+    bits_ = static_cast<uint8_t*>(bits);
+    w_    = width;
+    h_    = height;
+    x_    = x;
+    y_    = y;
+
+    Clear();
+    // SWP_SHOWWINDOW: a layered window moved while hidden would otherwise keep
+    // its old content on screen until the next Push().
+    SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, w_, h_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    Push();
+    return true;
 }
 
 void TransparentWindow::Clear()

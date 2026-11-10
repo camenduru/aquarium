@@ -84,6 +84,18 @@ Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
 animal is generated on a worker thread and appears in place, while the rest of
 the tank keeps swimming. It stops at 16 fish, where the entry greys out.
 
+**Full screen on this monitor** resizes the layered window to the monitor's full
+bounds. Because the aquarium is chrome-less and click-through per pixel, the
+taskbar underneath still gets its clicks wherever no fish is swimming. The menu
+entry stays checked while it applies, and unchecking it returns to the size the
+window had before.
+
+**Swap monitor** moves the tank to the next screen and cycles: monitors are
+sorted left-to-right (then top-to-bottom), so the order is predictable rather
+than whatever order the display driver reports. While full screen it fills the
+new monitor; otherwise it re-centres at the same windowed size, clamped to fit.
+With a single monitor the entry is greyed out.
+
 `tools/probe_window.ps1` reads the layered/topmost/visible styles back out of
 Windows, so the transparency setup can be verified rather than assumed.
 

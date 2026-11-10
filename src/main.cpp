@@ -43,6 +43,12 @@ sea::u64          g_seed    = 7;
 int               g_seconds = 0;
 std::chrono::steady_clock::time_point g_start;
 
+std::vector<RECT> g_monitors;          // left-to-right, then top-to-bottom
+int               g_monitor   = 0;     // the screen the tank lives on
+bool              g_fullscreen = false;
+int               g_windowedW = 1200;  // size to come back to when un-fullscreening
+int               g_windowedH = 680;
+
 std::vector<std::string> CommandLineArgs()
 {
     std::vector<std::string> args;
@@ -67,6 +73,94 @@ void AttachParentConsole()
     FILE* f = nullptr;
     freopen_s(&f, "CONOUT$", "w", stdout);
     freopen_s(&f, "CONOUT$", "w", stderr);
+}
+
+// EnumDisplayMonitors hands them over in driver order, which makes "the next
+// monitor" unpredictable, so sort them into a stable left-to-right sweep.
+void RefreshMonitors()
+{
+    g_monitors.clear();
+    EnumDisplayMonitors(nullptr, nullptr,
+        [](HMONITOR, HDC, LPRECT rect, LPARAM param) -> BOOL
+        {
+            reinterpret_cast<std::vector<RECT>*>(param)->push_back(*rect);
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&g_monitors));
+
+    std::sort(g_monitors.begin(), g_monitors.end(), [](const RECT& a, const RECT& b) {
+        if (a.left != b.left) return a.left < b.left;
+        return a.top < b.top;
+    });
+
+    if (g_monitors.empty())
+        g_monitors.push_back(RECT{ 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) });
+}
+
+int MonitorIndexAt(int x, int y)
+{
+    for (size_t i = 0; i < g_monitors.size(); ++i)
+    {
+        const RECT& r = g_monitors[i];
+        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+            return int(i);
+    }
+    return 0;   // a gap between differently sized screens, or off-screen
+}
+
+// Remembers the windowed size so leaving full screen returns to it rather than
+// to whatever the monitor happened to be.
+void ResizeTankTo(int width, int height, int x, int y)
+{
+    if (!g_window.Resize(width, height, x, y))
+        return;
+    g_tank.Resize(width, height);
+    if (!g_fullscreen)
+    {
+        g_windowedW = width;
+        g_windowedH = height;
+    }
+}
+
+// Full screen here means "the monitor's full bounds", not the work area: the
+// tank is chrome-less and per-pixel click-through, so the taskbar underneath
+// keeps its clicks wherever there is no fish.
+void FillMonitor(int index)
+{
+    const RECT& r = g_monitors[size_t(index)];
+    ResizeTankTo(int(r.right - r.left), int(r.bottom - r.top), int(r.left), int(r.top));
+}
+
+void CenterOnMonitor(int index, int width, int height)
+{
+    const RECT& r = g_monitors[size_t(index)];
+    const int monitorW = int(r.right - r.left);   // RECT edges are LONG: keep the
+    const int monitorH = int(r.bottom - r.top);   // min() arguments the same type
+    const int w = std::min(width,  monitorW);
+    const int h = std::min(height, monitorH);
+    ResizeTankTo(w, h,
+                 int(r.left) + (monitorW - w) / 2,
+                 int(r.top)  + (monitorH - h) / 2);
+}
+
+void ToggleFullscreen()
+{
+    g_fullscreen = !g_fullscreen;
+    if (g_fullscreen)
+        FillMonitor(g_monitor);
+    else
+        CenterOnMonitor(g_monitor, g_windowedW, g_windowedH);
+}
+
+void CycleMonitor()
+{
+    if (g_monitors.size() < 2) return;
+    g_monitor = (g_monitor + 1) % int(g_monitors.size());
+
+    if (g_fullscreen)
+        FillMonitor(g_monitor);
+    else
+        CenterOnMonitor(g_monitor, g_window.Width(), g_window.Height());
 }
 
 void RestartTank(int width, int height)
@@ -140,9 +234,19 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
 {
     HMENU menu = CreatePopupMenu();
     if (menu == nullptr) return;
-    const bool canAdd = g_tank.FishCount() < kMaxTankFish;
+    RefreshMonitors();                       // a monitor may have been plugged in
+    if (g_monitor >= int(g_monitors.size()))
+        g_monitor = 0;
+
+    const bool canAdd       = g_tank.FishCount() < kMaxTankFish;
+    const bool multiMonitor = g_monitors.size() > 1;
+
     AppendMenuW(menu, MF_STRING, 1, L"New tank  (Ctrl+Shift+N)");
     AppendMenuW(menu, MF_STRING | (canAdd ? 0u : MF_GRAYED), 2, L"Add a random fish");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (g_fullscreen ? MF_CHECKED : 0u), 4,
+                L"Full screen on this monitor");
+    AppendMenuW(menu, MF_STRING | (multiMonitor ? 0u : MF_GRAYED), 5, L"Swap monitor");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 3, L"Quit  (Ctrl+Shift+Q)");
 
@@ -159,6 +263,10 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     }
     else if (cmd == 3)
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    else if (cmd == 4)
+        ToggleFullscreen();
+    else if (cmd == 5)
+        CycleMonitor();
 }
 
 } // namespace
@@ -211,6 +319,12 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         std::printf("aquarium: cannot create the layered window\n");
         return 2;
     }
+
+    g_windowedW = width;
+    g_windowedH = height;
+    RefreshMonitors();
+    g_monitor = MonitorIndexAt(posX, posY);
+    std::printf("aquarium: %d monitor(s), on monitor %d\n", int(g_monitors.size()), g_monitor);
 
     g_window.onHotkey = [](int id)
     {

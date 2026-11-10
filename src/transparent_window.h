@@ -38,6 +38,10 @@ public:
     void Show();
     void MoveTo(int x, int y);
 
+    /// Move and resize. The DIB is recreated at the new size, so the previous
+    /// frame is dropped - harmless, every frame redraws the whole canvas.
+    bool Resize(int width, int height, int x, int y);
+
     HWND Hwnd() const { return hwnd_; }
     int Width() const { return w_; }
     int Height() const { return h_; }
