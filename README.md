@@ -1,5 +1,7 @@
 # Aquarium
 
+> **1.3 sextillion sea creatures. Never the same fish twice.**
+
 https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
 
 A transparent desktop fish tank for Windows. A frameless, click-through-per-pixel
@@ -120,6 +122,68 @@ Cost is CPU cycles per pixel touched, not GPU time: one fish at 2x covers
 per frame**. That is the budget this design spends in exchange for per-pixel
 alpha, which a Direct3D swap chain on an `HWND` cannot provide at all.
 
+## How many creatures can be generated
+
+The generator itself has a finite roster, but the individuals it can invent are
+effectively unlimited.
+
+### Named species: 47 + "Random" = 48 entries
+
+| Kind | Presets |
+| --- | --- |
+| Fish | 18 - Goldfish, Clownfish, Angelfish, Tuna, Eel, Pufferfish, Betta, Neon tetra, Koi, Discus, Mackerel, Piranha, Yellow tang, Blue tang, Rainbow trout, Atlantic salmon, Great barracuda, Ocean sunfish |
+| Shark | 8 - Tiger, Great white, Hammerhead, Whale, Mako, Blacktip reef, Blue, Nurse |
+| Whale / dolphin | 6 - Orca, Bottlenose dolphin, Common dolphin, Beluga, Humpback, Sperm whale |
+| Ray | 5 - Cownose, Manta, Spotted eagle, Stingray, Bluespotted stingray |
+| Squid / cuttlefish | 3 - Squid, Giant squid, Cuttlefish |
+| Octopus | 3 - Octopus, Blue-ringed, Dumbo |
+| Urchin | 4 - Purple, Long-spined, Red pencil, Green |
+
+Eight of those have colour-morph tables (Goldfish 4, Clownfish 2, Angelfish 3,
+Betta 5, Koi 5, Discus 3, Manta 2, Cuttlefish 2), so there are **65 distinct
+named species + morph looks**.
+
+### Individuals: effectively unlimited
+
+Every animal is a ~118-gene genome and most genes are continuous doubles drawn
+from the seed, so a seed does not select one of a few variants - it produces a
+unique individual:
+
+- **7 kinds**, each with seed-selectable sub-variants: shark (requiem /
+  hammerhead), whale (whale / dolphin), ray (eagle / stingray), squid (squid /
+  cuttlefish), octopus (octopus / dumbo), urchin (short / long), and fish with 5
+  body archetypes (slender, torpedo, classic, deep, round).
+- **2^64 seeds per kind** - about **1.8 x 10^19 individuals per kind**, and
+  **~1.3 x 10^20 across all seven** - before counting that presets vary too
+  ("Koi, seed 3" and "Koi, seed 4" are recognisably koi but not twins).
+- The discrete building blocks alone already multiply past counting: 5 body
+  archetypes x 9 tail shapes x 6 fin shapes x 3 eye styles x 3 wing shapes x 26
+  markings x 2 lobe types, plus booleans (teeth, pleats, vertical swim, ...) and
+  continuous hues, proportions and fin placements.
+
+In practice you will never see the same fish twice. The tank's opening fish and
+every **Add a random fish** pick are both drawn fresh, so no two launches repeat
+the same animal.
+
+**Total generatable creatures: 1,328,165,573,307,087,716,352** - over
+**1.3 sextillion** unique animals, each one reachable from a single seed.
+
+The count, in one line:
+
+```
+N = S x (P + K) = 2^64 x (65 + 7) = 72 x 2^64
+
+  = 1,328,165,573,307,087,716,352
+
+S = 2^64 seeds            P = 65 named species + morph looks
+K = 7 random kinds        (17 if a sub-variant is pinned: 1,512,633,014,044,183,232,512)
+```
+
+The genome itself has far more room than a seed can reach - ~78 continuous
+genes at 53 bits each times the discrete choices is roughly `10^1256`
+combinations - so `2^64` is the limit of what the generator can actually be
+asked for, and the total above is what it can produce.
+
 ## Build
 
 ```
@@ -131,14 +195,15 @@ build/run/Release/aquarium.exe      # multi-config generator appends the config
 or, without CMake (MSVC only):
 
 ```
-./build.sh
+./build.sh          # Git Bash / MSYS
+./build.ps1         # PowerShell, no bash needed
 bin/aquarium.exe
 ```
 
 ## Run
 
 ```
-aquarium.exe                      # 1200x680, bottom-right of the work area, 8 fish
+aquarium.exe                      # 1200x680, bottom-right of the work area, 1 fish
 aquarium.exe --fish 12 --seed 99
 aquarium.exe --width 1600 --height 900
 aquarium.exe --seconds 20         # auto-close (for checks)
@@ -154,7 +219,8 @@ Hotkeys (global, work while another app has focus):
 
 Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
 animal is generated on a worker thread and appears in place, while the rest of
-the tank keeps swimming. It stops at 16 fish, where the entry greys out.
+the tank keeps swimming. It stops at 128 fish (`kMaxTankFish`), where the entry
+greys out. Every added fish is a fresh random individual.
 
 **Full screen on this monitor** resizes the layered window to the monitor's full
 bounds. Because the aquarium is chrome-less and click-through per pixel, the
