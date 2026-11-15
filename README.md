@@ -136,7 +136,7 @@ alpha, which a Direct3D swap chain on an `HWND` cannot provide at all.
 The tank can be read as a tank instead of as fish on a desktop: a low-alpha
 **ghost** water body, a procedural sand bed with rock silhouettes and a reef of
 corals, plants and polyps, caustics on the sand, a foam line at the surface,
-ripple rings, and an airstone bubble column. It is on by default; `--water off`
+ripple rings, and airstone bubble columns. It is on by default; `--water off`
 is today's aquarium, and the dump at a fixed seed is byte-identical to the
 pre-water build.
 
@@ -223,6 +223,28 @@ change it:
   adding a fish; the menu entry greys out at 24).
 - `--corals N` overrides the count for this run, including dumps.
 - Edit `coral_count` in `water.ini`; a reload rebuilds the plate and masks.
+
+### Bubbles
+
+The airstone is a bubble column, and `water.ini` owns both how many beads rise
+and where the columns leave the tank:
+
+```
+[falls]
+bubble_count = 20
+bubble_column_1 = 0.16,0.90
+```
+
+`bubble_count` (0-64) is the number of beads in **each** column. Every
+`bubble_column_N` line is one outlet, written as `x,y` in fractions of the tank
+(0,0 is the top left), and the column rises from there to the surface. Add a
+line to add a column, delete it to remove that column: the list is rebuilt from
+the file on every load, so nothing stale survives a reload. Up to six outlets
+are accepted, and at most 128 beads are drawn in total.
+
+With no `bubble_column_N` line the single outlet stays on the stone's airstone,
+which is the default, so an untouched `water.ini` looks like the original
+column. The airstone ripple rings cycle through the configured outlets.
 
 ## How many creatures can be generated
 

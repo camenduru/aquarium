@@ -35,6 +35,20 @@ struct Grade
 /// scenery, not wallpaper, and the ghost alpha budget is shared.
 constexpr int kMaxCorals = 24;
 
+/// Hard cap on airstone beads; the column is resolved into a fixed array.
+constexpr int kMaxBubbles = 128;
+
+/// How many bubbling outlets water.ini may define (one bubble column each).
+constexpr int kMaxBubbleColumns = 6;
+
+/// One bubbling outlet, in fractions of the tank: (0,0) top-left, (1,1)
+/// bottom-right. The column rises from y towards the surface.
+struct BubbleEmitter
+{
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 struct AquascapeSpec
 {
     unsigned seed       = 7;
@@ -110,6 +124,8 @@ struct WaterTuning
     float rippleHighlight  = 0.3f;
 
     // ---- airstone (the demo's waterfall block, re-aimed) -------
+    int   bubbleCount         = 20;    // beads per outlet (0-64)
+    std::vector<BubbleEmitter> bubbleEmitters;   // empty = the stone's airstone
     float flowAspect          = 1.8f;
     float flowDensity         = 0.22f;
     float flowSpeed           = 2.8f;

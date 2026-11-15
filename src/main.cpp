@@ -86,6 +86,7 @@ double g_clock      = 0.0;
 float  g_night      = 0.0f;
 bool   g_nightAuto  = true;
 double g_airstoneTimer = 0.4;
+int    g_airstoneOutlet = 0;   // cycles when water.ini defines several outlets
 
 /// A fresh seed at every launch, so each app open fills the tank with
 /// different fish. `--seed N` still overrides it for reproducible runs.
@@ -375,7 +376,18 @@ void TickAirstone(double dt)
     g_airstoneTimer -= dt;
     if (g_airstoneTimer > 0.0) return;
     g_airstoneTimer = 0.85 + 0.5 * std::fmod(g_clock * 0.6180339887, 1.0);
-    g_ripples.Add(g_masks.AirstoneX(), g_masks.AirstoneY(), g_clock, 0.4f);
+
+    // Each configured outlet gets the ring in turn; an empty list falls back
+    // to the stone, so the plain tank keeps its single airstone.
+    const std::vector<water::BubbleEmitter>& outlets = g_tuning.bubbleEmitters;
+    if (outlets.empty())
+    {
+        g_ripples.Add(g_masks.AirstoneX(), g_masks.AirstoneY(), g_clock, 0.4f);
+        return;
+    }
+    const water::BubbleEmitter& e = outlets[std::size_t(g_airstoneOutlet) % outlets.size()];
+    g_airstoneOutlet = (g_airstoneOutlet + 1) % int(outlets.size());
+    g_ripples.Add(e.x * float(g_logicalW), e.y * float(g_logicalH), g_clock, 0.4f);
 }
 
 /// Plate, fish, front rock - in that order, into the straight-alpha logical
@@ -471,6 +483,7 @@ void SetWater(WaterMode mode)
     g_waterMode = mode;
     g_ripples.Reset();
     g_airstoneTimer = 0.4;
+    g_airstoneOutlet = 0;
 
     if (mode == WaterMode::Ghost)
         PrepareWater(g_window.Width(), g_window.Height());

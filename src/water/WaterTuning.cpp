@@ -30,6 +30,14 @@ struct BoolDef
     bool WaterTuning::* field;
 };
 
+struct IntDef
+{
+    const char* section;
+    const char* key;
+    int WaterTuning::* field;
+    int lo, hi;
+};
+
 struct GradeDef
 {
     const char* key;    // "<id>_grade" - hue/saturation/brightness follow
@@ -126,6 +134,10 @@ const FloatDef kFloats[] = {
     { "night", "moon_amplitude", &WaterTuning::moonAmplitude, 0.0f, 20.0f },
     { "night", "moon_speed",     &WaterTuning::moonSpeed,    -4.0f, 4.0f },
     { "night", "offset_moon_speed", &WaterTuning::offsetMoon, -1000.0f, 1000.0f },
+};
+
+const IntDef kInts[] = {
+    { "falls", "bubble_count", &WaterTuning::bubbleCount, 0, kMaxBubbles },
 };
 
 const BoolDef kBools[] = {
@@ -293,6 +305,27 @@ bool ApplySetting(const std::string& key, const std::string& value,
         return true;
     }
 
+    for (const IntDef& def : kInts)
+    {
+        if (k != def.key) continue;
+        float parsed = 0.0f;
+        if (!ParseFloat(value, parsed) || parsed != std::floor(parsed))
+        {
+            error = k + ": expected an integer";
+            return false;
+        }
+        const int v = int(parsed);
+        if (v < def.lo || v > def.hi)
+        {
+            std::ostringstream msg;
+            msg << k << ": " << v << " outside [" << def.lo << ", " << def.hi << "]";
+            error = msg.str();
+            return false;
+        }
+        tuning.*(def.field) = v;
+        return true;
+    }
+
     for (const GradeDef& def : kGrades)
     {
         const std::string base = std::string(def.key) + "_";
@@ -376,6 +409,38 @@ bool ApplySetting(const std::string& key, const std::string& value,
         return true;
     }
 
+    // [falls] outlets: "bubble_column_N = x,y" in tank fractions. Repeatable
+    // lines; deleting one removes that bubble column on the next reload.
+    if (k.rfind("bubble_column", 0) == 0)
+    {
+        const size_t comma = value.find(',');
+        if (comma == std::string::npos)
+        {
+            error = k + ": expected x,y (fractions of the tank, e.g. 0.16,0.90)";
+            return false;
+        }
+        float x = 0.0f, y = 0.0f;
+        if (!ParseFloat(value.substr(0, comma), x) || !ParseFloat(value.substr(comma + 1), y))
+        {
+            error = k + ": expected x,y (fractions of the tank, e.g. 0.16,0.90)";
+            return false;
+        }
+        if (x < 0.0f || x > 1.0f || y < 0.0f || y > 1.0f)
+        {
+            error = k + ": outside [0, 1]";
+            return false;
+        }
+        if (int(tuning.bubbleEmitters.size()) >= kMaxBubbleColumns)
+        {
+            std::ostringstream msg;
+            msg << k << ": at most " << kMaxBubbleColumns << " outlets";
+            error = msg.str();
+            return false;
+        }
+        tuning.bubbleEmitters.push_back({ x, y });
+        return true;
+    }
+
     error = "unknown key: " + k;
     return false;
 }
@@ -394,6 +459,10 @@ bool LoadIni(const std::string& path, WaterTuning& tuning, AquascapeSpec& spec,
     std::string section;
     int lineNumber = 0;
     bool sawAnyValue = false;
+
+    // Outlets are a list, so a reload rebuilds it from the file: deleting a
+    // bubble_column line removes that column instead of leaving a stale one.
+    tuning.bubbleEmitters.clear();
 
     while (std::getline(file, line))
     {
@@ -473,22 +542,41 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
         if (std::strcmp(name, "caustics") == 0) return "light lattice, strongest on the sand";
         if (std::strcmp(name, "foam") == 0)     return "surface line and backwash";
         if (std::strcmp(name, "ripples") == 0)  return "rings from clicks, turns and the airstone";
-        if (std::strcmp(name, "falls") == 0)    return "airstone bubble column (the demo's waterfall terms)";
+        if (std::strcmp(name, "falls") == 0)    return "airstone bubble columns (the demo's waterfall terms)";
         if (std::strcmp(name, "night") == 0)    return "moon band";
         return nullptr;
     };
 
     const char* section = nullptr;
+    const auto writeSectionTail = [&](const char* name)
+    {
+        if (name == nullptr) return;
+        for (const IntDef& def : kInts)
+            if (std::strcmp(def.section, name) == 0)
+                file << def.key << " = " << (tuning.*(def.field)) << "\n";
+
+        if (std::strcmp(name, "falls") != 0) return;
+        file << "; bubbling outlets, one line each; x,y are fractions of the tank.\n"
+                "; add a line to add a column, delete one to remove it. With no line\n"
+                "; at all the single outlet sits on the stone's airstone.\n";
+        if (tuning.bubbleEmitters.empty())
+            file << "; bubble_column_1 = 0.16,0.90\n";
+        for (size_t i = 0; i < tuning.bubbleEmitters.size(); ++i)
+            file << "bubble_column_" << (i + 1) << " = "
+                 << tuning.bubbleEmitters[i].x << "," << tuning.bubbleEmitters[i].y << "\n";
+    };
     for (const FloatDef& def : kFloats)
     {
         if (section == nullptr || std::strcmp(section, def.section) != 0)
         {
+            writeSectionTail(section);
             section = def.section;
             file << "\n[" << section << "]\n";
             if (const char* text = blurb(section)) file << "; " << text << "\n";
         }
         file << def.key << " = " << (tuning.*(def.field)) << "\n";
     }
+    writeSectionTail(section);
 
     file << "\n[effects]\n"
             "; effect switches, then the HSV grades (0 = untouched)\n";
