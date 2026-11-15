@@ -301,6 +301,37 @@ void RebuildAquascape()
     g_water.InvalidateStatic();
 }
 
+/// Print the rarity actually in force, once per change. "Why do I keep getting
+/// rays?" is answerable from the console this way instead of by guessing which
+/// file, build or saved tank is in play.
+void ReportRarity(const double (&weights)[sea::kKindCount])
+{
+    static double last[sea::kKindCount] = { -1, -1, -1, -1, -1, -1, -1 };
+    bool changed = false;
+    for (int i = 0; i < sea::kKindCount; ++i)
+        changed = changed || weights[i] != last[i];
+    if (!changed) return;
+    for (int i = 0; i < sea::kKindCount; ++i) last[i] = weights[i];
+
+    double total = 0.0;
+    for (double w : weights)
+        total += std::max(0.0, w);
+
+    std::printf("aquarium: random kinds:");
+    for (int i = 0; i < sea::kKindCount; ++i)
+    {
+        const char* name = KindName(sea::SeaKind(i));
+        const double w = std::max(0.0, weights[i]);
+        if (!(total > 0.0))          std::printf(" %s even", name);
+        else if (!(w > 0.0))         std::printf(" %s never", name);
+        else if (100.0 * w / total >= 10.0)
+            std::printf(" %s %.1f%%", name, 100.0 * w / total);
+        else
+            std::printf(" %s 1 in %.0f", name, total / w);
+    }
+    std::printf("\n");
+}
+
 /// Hand the fish-side tuning to the tank: how hard a poke scares a fish, and
 /// the odds of each kind when a random animal is added. Called on startup, on
 /// a hot reload and after a save is loaded, so the tank and the file can never
@@ -316,6 +347,7 @@ void ApplyFishTuning()
         double(g_tuning.weightUrchin),
     };
     g_tank.SetKindWeights(weights);
+    ReportRarity(weights);
 }
 
 /// Read water.ini (if present), then re-apply the command line overrides on
@@ -788,6 +820,22 @@ void Step(double dt)
     g_window.Push();
 }
 
+/// Add one random fish and name the animal it rolled: with a rarity table in
+/// play, "what did I actually get" should be visible, not inferred from a
+/// 64 px sprite. Shared by the menu and Ctrl+Shift+A.
+void AddOneFish()
+{
+    if (!g_tank.AddFish())
+    {
+        std::printf("aquarium: cannot add a fish (full at %d)\n", kMaxTankFish);
+        return;
+    }
+    const std::vector<TankCreature> crew = g_tank.Snapshot();
+    std::printf("aquarium: added %s, %d in the tank\n",
+                crew.empty() ? "a fish" : crew.back().species.c_str(),
+                g_tank.FishCount());
+}
+
 void ShowMenu(HWND hwnd, int screenX, int screenY)
 {
     HMENU menu = CreatePopupMenu();
@@ -842,7 +890,7 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     if (cmd == 1)
         RestartTank(g_window.Width(), g_window.Height());
     else if (cmd == 2)
-        g_tank.AddFish();
+        AddOneFish();
     else if (cmd == 3)
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
     else if (cmd == 4)
@@ -1053,12 +1101,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         {
             // The way back from an empty tank: with no fish there is no solid
             // pixel, so the window cannot be right-clicked to reach the menu.
-            if (g_tank.AddFish())
-                std::printf("aquarium: added a fish, %d in the tank\n",
-                            g_tank.FishCount());
-            else
-                std::printf("aquarium: cannot add a fish (full at %d)\n",
-                            kMaxTankFish);
+            AddOneFish();
         }
     };
     g_window.onRightClick = [](int sx, int sy)

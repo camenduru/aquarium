@@ -57,6 +57,48 @@ Sheets are rendered on a worker thread (a 64 px sheet is seconds of
 supersampled rendering), so the window appears immediately and fish arrive one
 by one.
 
+### Which fish you get
+
+Every random fish - the ones a new tank opens with and every **Add a random
+fish** - draws its kind from `[fish]` in `water.ini`. The default is a reef of
+fish with a rarity ladder above it:
+
+```ini
+[fish]
+fish_weight = 1000     ; 98 % of random fish
+shark_weight = 6       ; 1 in 170
+whale_weight = 5       ; 1 in 204
+ray_weight = 4         ; 1 in 255
+squid_weight = 3       ; 1 in 340
+octopus_weight = 2     ; 1 in 511
+urchin_weight = 1      ; 1 in 1021
+```
+
+Only the ratios matter: `fish_weight = 1000, urchin_weight = 1` makes an urchin
+1 in 1001, and `0` keeps a kind out of the draw entirely (`fish_weight = 0` is a
+tank of exotics). All seven at `0` would make a random fish impossible, so that
+one case falls back to even odds instead of refusing. Weights are clamped to
+0-1000 and a bad line is reported while the previous value stays, like every
+other key.
+
+The draw happens **when the fish is made**, not when it is drawn, and the kind
+is stored in the save as part of the species (`Random:Urchin`), so editing the
+weights later changes what *new* fish are, never the animals already swimming or
+the ones in an old save. A save written before the weights existed stores the
+bare `Random`, which still rebuilds the same animal from its seed - those were
+drawn evenly from the seven kinds. **Ctrl+Shift+N** starts a new tank under the
+current weights.
+
+The console prints the rarity in force at startup and after every reload, and
+each added fish is named, so "which numbers am I actually running" is always
+visible:
+
+```
+aquarium: random kinds: fish 97.9% shark 1 in 170 whale 1 in 204 ray 1 in 255
+squid 1 in 340 octopus 1 in 511 urchin 1 in 1021
+aquarium: added Random:Ray, 12 in the tank
+```
+
 ## How a fish is drawn, in detail
 
 There is no GPU code in this project and there are no shaders. A fish is
@@ -137,8 +179,9 @@ The tank can be read as a tank instead of as fish on a desktop: a low-alpha
 **ghost** water body, a procedural sand bed with rock silhouettes and a reef of
 corals, plants and polyps, caustics on the sand, a foam line at the surface,
 ripple rings, and airstone bubble columns. It is on by default; `--water off`
-is today's aquarium, and the dump at a fixed seed is byte-identical to the
-pre-water build.
+is the fish layer alone, and the fixed six-fish tank in
+`tools/fixtures/legacy-seed99-6fish.ini` dumps byte-identically to the pre-water
+build (`51E5EF7C…`).
 
 Everything is still generated in code - there is no PNG loader and no asset
 folder. The sand, gravel dither, rock silhouettes, the front rock and every
@@ -187,6 +230,9 @@ sand_y = 0.86
 rock_count = 4
 coral_count = 9
 ```
+
+Weights are relative, not percentages: `1000/6/5/4/3/2/1` reads as "about 1 random
+fish in 50 is not a fish". See [Which fish you get](#which-fish-you-get).
 
 Invalid or out-of-range values are reported and the previous value is kept.
 Changing an `[aquascape]` key rebuilds the sand, rock, coral and masks together.

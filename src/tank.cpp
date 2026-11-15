@@ -10,24 +10,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <random>
 
 namespace
 {
-
-// Species that read clearly at 64 px and between them cover every major
-// shape the generator has: fish, a ray, a shark, a cephalopod, a puffer.
-const char* const kSpecies[] = {
-    "Clownfish",
-    "Koi",
-    "Yellow tang",
-    "Pufferfish",
-    "Manta ray",
-    "Stingray",
-    "Giant squid",
-    "Octopus",
-};
-constexpr int kSpeciesCount = int(sizeof(kSpecies) / sizeof(kSpecies[0]));
 
 constexpr int kCell       = 64;   // sprite cell
 constexpr int kSmoothness = 2;    // 16 swim frames / 20 turn frames
@@ -183,23 +170,16 @@ void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
 
     std::mt19937 rng(uint32_t(seed ^ 0x9E3779B97F4A7C15ull));
 
-    // Shuffle the preset pool once per launch: which fish the tank opens
-    // with is then random every start instead of always the same species.
-    // Seeds from fresh launches are random too, so the genomes differ as well.
-    startOrder_.assign(kSpecies, kSpecies + kSpeciesCount);
-    std::shuffle(startOrder_.begin(), startOrder_.end(), rng);
-
     fish_.assign(size_t(fishCount), TankFish());
     std::vector<CreatureJob> jobs;
     jobs.reserve(size_t(fishCount));
     for (int i = 0; i < fishCount; ++i)
     {
         TankFish& f = fish_[size_t(i)];
-        // The pool covers the first few; the rest are random animals, and
-        // their kind follows water.ini's weights.
-        f.species   = i < kSpeciesCount
-                    ? startOrder_[size_t(i)]
-                    : RandomSpeciesName(sea::SeaKind(
+        // Every fish in a new tank is a random animal of a weighted kind, so
+        // the opening school is the same mix as the ones added later: mostly
+        // fish, occasionally something else (water.ini's [fish] weights).
+        f.species   = RandomSpeciesName(sea::SeaKind(
                           PickWeightedKind(kindWeight_, double(rng()) / 4294967296.0)));
         f.seed      = seed_ + sea::u64(i) * 37 + 1;
         InitFish(f, rng);
@@ -329,6 +309,13 @@ bool Tank::AddFish()
     added.seed    = salt;
     InitFish(added, rng);
 
+    // The worker must be handed the kind that was just drawn. The bare
+    // "Random" here would fall into GenomeFor()'s legacy-save branch, which
+    // picks a kind from the seed at even odds - 1 in 7 exotics instead of the
+    // ~1 in 50 the weights ask for - and would build a sheet that disagrees
+    // with the species stored in the tank (and so in a save).
+    const std::string species = added.species;
+
     // Unready fish are skipped by Update and Draw, so the newcomer is invisible
     // until its sheet lands - and the tank never pauses in the meantime.
     fish_.push_back(std::move(added));
@@ -338,7 +325,7 @@ bool Tank::AddFish()
     }
 
     workers_.emplace_back(&Tank::WorkerRange, this, index,
-                          std::vector<CreatureJob>{ CreatureJob{ "Random", salt } });
+                          std::vector<CreatureJob>{ CreatureJob{ species, salt } });
     return true;
 }
 
@@ -352,6 +339,8 @@ void Tank::WorkerRange(int first, std::vector<CreatureJob> jobs)
         // so a restored tank reproduces the same sheet without re-deriving
         // either from the tank seed.
         const sea::SeaGenome genome = GenomeFor(jobs[size_t(n)].species, jobs[size_t(n)].seed);
+        std::printf("SPAWNCHK job='%s' -> genome %s\n",
+                    jobs[size_t(n)].species.c_str(), sea::KindId(genome.kind));
 
         sea::SeaSpriteOptions options;
         options.size       = kCell;

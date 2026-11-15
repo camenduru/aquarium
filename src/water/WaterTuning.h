@@ -155,12 +155,12 @@ struct WaterTuning
     /// Relative odds of each kind when a random fish is added, in SeaKind
     /// order (fish, shark, whale, ray, squid, octopus, urchin). Only the
     /// ratios matter; 0 keeps that kind out of the random draw entirely.
-    /// The defaults are a reef ladder: small fish are the school, urchins are
-    /// a find.
-    int weightFish    = 30;
-    int weightShark   = 12;
-    int weightWhale   = 8;
-    int weightRay     = 5;
+    /// The defaults keep the school fish: about 1 random fish in 50 is
+    /// something else, an urchin about 1 in 1000.
+    int weightFish    = 1000;
+    int weightShark   = 6;
+    int weightWhale   = 5;
+    int weightRay     = 4;
     int weightSquid   = 3;
     int weightOctopus = 2;
     int weightUrchin  = 1;

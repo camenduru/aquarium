@@ -191,10 +191,6 @@ private:
     /// no two clicks within a process ever share a fish seed.
     std::mt19937_64 salty_{ std::random_device{}() };
 
-    /// The preset pool shuffled once per launch, so a new tank opens with a
-    /// random pick instead of the same list order every time.
-    std::vector<const char*> startOrder_;
-
     /// Seconds until the next turn may emit a ripple.
     double rippleCooldown_ = 0.0;
 

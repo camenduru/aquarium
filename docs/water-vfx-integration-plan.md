@@ -325,6 +325,15 @@ coral_count = 9
 - `[fish] escape_speed` (1–6) is aquarium-only too: how fast a clicked fish
   flees, as a multiple of its cruise speed. `[water]`/`[effects]`/`[aquascape]`
   stay the demo's and the plate's own keys.
+- `[fish] <kind>_weight` (0–1000 each, SeaKind order: `fish`, `shark`, `whale`,
+  `ray`, `squid`, `octopus`, `urchin`) is the rarity table for random fish.
+  Only ratios matter; the defaults are `1000/6/5/4/3/2/1`, so the school is fish
+  and an urchin is 1 in ~1000. The draw happens when a fish is made (new tank
+  and **Add a random fish** alike) and the kind is stored in the species
+  (`Random:Urchin`), so editing the weights cannot mutate an existing tank or an
+  old save. The console prints the table in force, and the name of every fish it
+  adds (`Random:Ray`), because "why do I keep getting rays" has to be answerable
+  without a debugger.
 - One live file (`water.ini`, next to `aquarium.exe`); `--water-preset <path>`
   points at an alternative file for a check or a second look, and the
   right-click menu can rewrite the file from the current defaults. No
@@ -521,6 +530,7 @@ the INI poll and the hotkeys.
 | named presets in a `water\` folder | one `water.ini` beside the executable, `--water-preset <path>` for alternates | no preset browser means nothing to auto-save; the menu can rewrite the file from defaults |
 | no persistence in the plan | **tank.ini**: the settings file plus `[creatures]`, saved with **Ctrl+Shift+S** / `--save-tank` and restored with **Ctrl+Shift+L** / `--load-tank` | the reef is worth coming back to, and the format that already existed covered it: same `key = value` grammar, one extra section, no JSON and no binary blob. Fish identity is (species, genome seed), so nothing is re-invented on load |
 | fish could only be added | the right-click menu also **removes the fish under the pointer** (session-only, like adding; the last fish can go too, and **Ctrl+Shift+A** puts one back from the keyboard) | a school built one click at a time needs a way back, and the tank already knows which sprite owns a pixel - the same test a click uses - so removal is an index, not new state. With no fish left there is no solid pixel to right-click, hence the keyboard route |
+| a new tank opened with a shuffled 8-preset cast (half of it rays and cephalopods), and an added fish drew its kind evenly from the seven | one rule for every random fish: `[fish] <kind>_weight`, default `1000/6/5/4/3/2/1` (fish 98 %, urchin 1 in 1021), drawn when the fish is made and stored as `Random:<Kind>` | a reef should read as a school of fish with finds in it, not as a coin toss between an anemone and a ray. The old adds were the visible symptom: 29 % of them were a ray or an octopus. Keeping the kind in the species name is what makes the weights a taste instead of a save migration |
 
 Other decisions worth knowing: ripple radius edits compensate existing rings
 (the demo's phase-offset trick); bubble and ripple contributions are capped
@@ -537,7 +547,7 @@ before compositing so a crossing never lights the desktop to full opacity;
 | ghost alpha, mean over the tank | 18.0 % (18.7 % with all 24 corals) |
 | ghost alpha, mean over open water | 9.8 % |
 | highlights above 40 % of open water | 0.01 % |
-| `--water off` at seed 99, clock frozen | `51E5EF7C…` — byte-identical to the pre-water build |
+| `--water off` on `tools/fixtures/legacy-seed99-6fish.ini`, clock frozen | `51E5EF7C…` — byte-identical to the pre-water build (the fixture is a save of that build's 6-fish cast, since new tanks now draw weighted random kinds) |
 | save -> load round trip (BMP/PNG dump, seed 99, 6 fish) | byte-identical dump in water-off **and** ghost mode; load -> save reproduces the INI byte for byte |
 
 `python tools/check_water.py` covers determinism, the 2× block grid, the

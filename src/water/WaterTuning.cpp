@@ -568,7 +568,7 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
         if (std::strcmp(name, "ripples") == 0)  return "rings from clicks, turns and the airstone";
         if (std::strcmp(name, "falls") == 0)    return "airstone bubble columns (the demo's waterfall terms)";
         if (std::strcmp(name, "night") == 0)    return "moon band";
-        if (std::strcmp(name, "fish") == 0)     return "how a clicked fish flees, and the odds of each kind when a random fish is added";
+        if (std::strcmp(name, "fish") == 0)     return "how a clicked fish flees, and the odds of each kind - only ratios matter, 0 = never";
         return nullptr;
     };
 
