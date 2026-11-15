@@ -7,11 +7,13 @@
 # with the fish's cruise speed.
 #
 #   powershell -File tools\poke_check.ps1
+#   powershell -File tools\poke_check.ps1 -ExtraArgs '--water-set','escape_speed=5'
 #
 # The alarm lasts 1.6 s at up to 2.8x cruise speed, so over a 0.8 s gap
 # the poked fish should cover ~2.3x its normal distance, away from the
-# click.
+# click. With escape_speed = S the expectation is 1 + 0.75*(S-1).
 # ================================================================
+param([string[]] $ExtraArgs = @())
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 
@@ -52,7 +54,7 @@ Remove-Item bin\tank.ini -ErrorAction SilentlyContinue
 $dir = (New-Item -ItemType Directory -Force out\poke).FullName
 $log = Join-Path $dir 'log.txt'
 $exe = (Resolve-Path bin\aquarium.exe).Path
-$p = Start-Process -FilePath $exe -ArgumentList '--seed', '99', '--fish', '1' -PassThru -RedirectStandardOutput $log
+$p = Start-Process -FilePath $exe -ArgumentList (@('--seed', '99', '--fish', '1') + $ExtraArgs) -PassThru -RedirectStandardOutput $log
 Start-Sleep -Seconds 10
 
 $hwnd = [W]::FindWindow('AquariumOverlay', 'Aquarium')
