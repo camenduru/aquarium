@@ -57,10 +57,11 @@ constexpr const wchar_t* kWindowTitle = L"Aquarium";
 Tank              g_tank;
 TransparentWindow g_window;
 
-/// Fish handed to the next StartTank(): a loaded save spawns exactly these,
-/// an empty list means a fresh school from the tank seed. Consumed by
-/// StartTank(), so "New tank" after a load really starts over.
+/// Fish handed to the next StartTank(): a loaded save spawns exactly these
+/// (even none at all), otherwise a fresh school from the tank seed. Consumed
+/// by StartTank(), so "New tank" after a load really starts over.
 std::vector<TankCreature> g_spawnCreatures;
+bool                     g_spawnLoaded = false;
 
 // ---- water ------------------------------------------------------
 enum class WaterMode { Off, Ghost };
@@ -403,6 +404,7 @@ bool LoadTankFrom(const std::string& path)
 
     g_tuning         = save.tuning;
     g_spawnCreatures = save.creatures;
+    g_spawnLoaded    = true;
     g_fish           = int(save.creatures.size());
 
     // A saved tank that is loaded with --water-set still honours the flag;
@@ -432,7 +434,11 @@ void StartTank(int width, int height)
 {
     std::vector<TankCreature> crew;
     crew.swap(g_spawnCreatures);
-    if (!crew.empty() && g_tank.Restore(width, height, crew))
+    const bool fromSave = g_spawnLoaded;
+    g_spawnLoaded = false;
+    // A save of an emptied tank restores with no fish; the reef and the water
+    // are the tank. Only a "New tank" starts a fresh school.
+    if (fromSave && g_tank.Restore(width, height, crew))
     {
         g_fish = int(crew.size());
         return;
@@ -553,6 +559,7 @@ void RestartTank(int width, int height)
     // not silently dropped by a new tank.
     g_fish = std::max(1, g_tank.FishCount());
     g_spawnCreatures.clear();   // a new tank is a new school, not the saved one
+    g_spawnLoaded = false;
     g_seed += 101;
     StartTank(width, height);
 }
@@ -772,13 +779,25 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     if (g_monitor >= int(g_monitors.size()))
         g_monitor = 0;
 
+    // The menu opens where the pointer was, so the pixel that was clicked is
+    // still the one under the cursor - the tank is frozen while the menu is up.
+    POINT client = { screenX, screenY };
+    ScreenToClient(hwnd, &client);
+    const int fishUnder = g_tank.FishAt(double(client.x), double(client.y));
+
     const bool canAdd       = g_tank.FishCount() < kMaxTankFish;
     const bool canCoral     = g_spec.coralCount < water::kMaxCorals
                            && g_waterMode == WaterMode::Ghost;
+    // Removing the last fish is allowed. An empty tank has no solid pixel, so
+    // the menu is out of reach until a fish comes back - Ctrl+Shift+A does
+    // that with the keyboard.
+    const bool canRemove    = fishUnder >= 0;
     const bool multiMonitor = g_monitors.size() > 1;
 
     AppendMenuW(menu, MF_STRING, 1, L"New tank  (Ctrl+Shift+N)");
-    AppendMenuW(menu, MF_STRING | (canAdd ? 0u : MF_GRAYED), 2, L"Add a random fish");
+    AppendMenuW(menu, MF_STRING | (canAdd ? 0u : MF_GRAYED), 2,
+                L"Add a random fish  (Ctrl+Shift+A)");
+    AppendMenuW(menu, MF_STRING | (canRemove ? 0u : MF_GRAYED), 13, L"Remove this fish");
     AppendMenuW(menu, MF_STRING | (canCoral ? 0u : MF_GRAYED), 10, L"Add a random coral");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_waterMode == WaterMode::Ghost ? MF_CHECKED : 0u), 6,
@@ -829,6 +848,19 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     {
         if (LoadTankFrom(TankPath()))
             StartTank(g_window.Width(), g_window.Height());
+    }
+    else if (cmd == 13)
+    {
+        // Picked from the fish that was under the pointer when the menu
+        // opened. Say so in the log: the numbering shifts for everything
+        // after it, so "removed fish_3" is a report, not a handle.
+        if (g_tank.RemoveFish(fishUnder))
+        {
+            std::printf("aquarium: removed fish_%d, %d left\n",
+                        fishUnder + 1, g_tank.FishCount());
+            if (g_tank.FishCount() == 0)
+                std::printf("aquarium: tank is empty - Ctrl+Shift+A adds a fish\n");
+        }
     }
 }
 
@@ -1000,6 +1032,17 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
             if (LoadTankFrom(TankPath()))
                 StartTank(g_window.Width(), g_window.Height());
         }
+        else if (id == 8)
+        {
+            // The way back from an empty tank: with no fish there is no solid
+            // pixel, so the window cannot be right-clicked to reach the menu.
+            if (g_tank.AddFish())
+                std::printf("aquarium: added a fish, %d in the tank\n",
+                            g_tank.FishCount());
+            else
+                std::printf("aquarium: cannot add a fish (full at %d)\n",
+                            kMaxTankFish);
+        }
     };
     g_window.onRightClick = [](int sx, int sy)
     {
@@ -1027,6 +1070,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     RegisterHotKey(g_window.Hwnd(), 5, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'T');
     RegisterHotKey(g_window.Hwnd(), 6, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'S');
     RegisterHotKey(g_window.Hwnd(), 7, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'L');
+    RegisterHotKey(g_window.Hwnd(), 8, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'A');
 
     PrepareWater(width, height);
 

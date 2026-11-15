@@ -1,6 +1,6 @@
 # Aquarium
 
-> **1.3 sextillion sea creatures, no third-party DLLs, in 842 KB.**
+> **1.3 sextillion sea creatures, no third-party DLLs, in 884 KB.**
 
 https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
 
@@ -282,6 +282,9 @@ bit-for-bit: load -> save reproduces the file byte for byte. A fish saved
 mid-swim reappears exactly where it was; only its swim cycle restarts, because
 the regenerated sheet begins at its first frame.
 
+`count = 0` is a valid save: an emptied tank keeps its sand, reef and settings,
+and loads back with no fish.
+
 Loading a save replaces the water settings as well (a `--water-set` flag still
 wins, like on a hot reload), rebuilds the plate from the saved aquascape seed,
 and clears the old ripples. A missing or malformed file is reported line by
@@ -300,6 +303,34 @@ aquarium.exe --load-tank out/tank.ini --dump-frame out/after.png
 
 That dump is byte-identical to the same run started from the seed, in water-off
 and in ghost mode.
+
+### Clicking and removing fish
+
+A **left click on a fish startles it**: it turns its back on the pointer and
+bolts away, then eases back to its cruise speed. The alarm lasts 1.6 s, and the
+flee speed is a multiple of that fish's own cruise speed:
+
+```
+[fish]
+; how fast a clicked fish flees (multiple of cruise speed)
+escape_speed = 2.8
+```
+
+`escape_speed` is 1-6 (1 = no hurry, 6 = a blur), read on load and on
+**Ctrl+Shift+R** like every other key. The fish picks the side with room, so a
+fish near a wall leaves the other way instead of bouncing off it. This works
+with the water off too - the fish still darts, there is just no ring behind it.
+Startle is an event, not part of the tank: it is deliberately absent from
+`tank.ini`.
+
+A **right click on a fish** opens the menu with **Remove this fish**, which takes
+that one animal out and leaves the rest swimming (the others renumber, so a
+saved `fish_N` afterwards is not the same fish as before). Like **Add a random
+fish**, the change lives in the session - **Ctrl+Shift+S** keeps it. The last
+fish can go too: the water, sand and reef are still an aquarium, and it saves and
+loads as one (`count = 0`). With no fish there is no solid pixel, so the window
+is fully click-through and its menu cannot be reached - **Ctrl+Shift+A** adds a
+fish back from the keyboard, which is why it exists alongside the menu entry.
 
 ## How many creatures can be generated
 
@@ -379,7 +410,7 @@ or, without CMake (MSVC only):
 bin/aquarium.exe
 ```
 
-The release build is one self-contained **880 KB** executable (`901,120 bytes`)
+The release build is one self-contained **884 KB** executable (`905,216 bytes`)
 with no third-party DLLs, no runtime install and no assets folder - the 1.3
 sextillion creatures, the sand, the rocks and the reef are all generated inside
 it.
@@ -416,11 +447,14 @@ Hotkeys (global, work while another app has focus):
 | `Ctrl+Shift+T` | night on / off |
 | `Ctrl+Shift+S` | save the tank to `tank.ini` |
 | `Ctrl+Shift+L` | load `tank.ini` |
+| `Ctrl+Shift+A` | add a random fish |
 
 Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
 animal is generated on a worker thread and appears in place, while the rest of
 the tank keeps swimming. It stops at 128 fish (`kMaxTankFish`), where the entry
-greys out. Every added fish is a fresh random individual.
+greys out. Every added fish is a fresh random individual, and **Ctrl+Shift+A**
+does the same thing without the mouse. The menu also carries **Remove this
+fish** - see [Clicking and removing fish](#clicking-and-removing-fish).
 
 **Add a random coral** grows the reef the same way: one new seeded coral,
 plant or polyp appears on the sand and the ones already there keep their place.

@@ -142,9 +142,11 @@ bool ParseCreature(const std::string& value, TankCreature& out, std::string& err
 
 bool Save(const std::string& path, const TankSave& save, std::string& error)
 {
-    if (save.creatures.empty())
+    // An empty tank is a tank: the water, the sand and the reef are still
+    // worth keeping, so count = 0 with no fish lines is a valid save.
+    if (int(save.creatures.size()) > kMaxTankFish)
     {
-        error = "the tank has no fish to save";
+        error = "too many fish for a save file";
         return false;
     }
     if (int(save.creatures.size()) > kMaxTankFish)
@@ -261,9 +263,9 @@ bool Load(const std::string& path, TankSave& out, std::string& error)
 
         if (key == "count")
         {
-            if (!ParseInt(val, declared) || declared < 1 || declared > kMaxTankFish)
+            if (!ParseInt(val, declared) || declared < 0 || declared > kMaxTankFish)
             {
-                error = path + ": count: expected 1-" + std::to_string(kMaxTankFish);
+                error = path + ": count: expected 0-" + std::to_string(kMaxTankFish);
                 return false;
             }
             continue;
@@ -286,7 +288,9 @@ bool Load(const std::string& path, TankSave& out, std::string& error)
         out.creatures.push_back(std::move(creature));
     }
 
-    if (out.creatures.empty())
+    // Empty is only valid when the file says so: count = 0 is an emptied tank,
+    // while a save with no count and no fish lines is a broken file.
+    if (out.creatures.empty() && declared != 0)
     {
         error = path + ": no fish in the save";
         return false;

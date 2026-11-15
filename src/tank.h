@@ -98,6 +98,18 @@ public:
     /// pixel holds no fish - the click was on open water or empty sprite.
     int PokeAt(double x, double y);
 
+    /// The fish drawn under a window pixel, or -1 for open water and empty
+    /// corners of a sprite cell. Used to decide what a click means.
+    int FishAt(double x, double y) const;
+
+    /// Take one fish out of the tank: the right-click menu's "Remove this
+    /// fish". The last fish can go too - only the water, sand and reef are
+    /// left, and AddFish() (Ctrl+Shift+A) puts a school back. False when the
+    /// index is wrong, or a sheet is still being built for another fish,
+    /// since slots in `pending_` are positional and must not shift under a
+    /// worker.
+    bool RemoveFish(int index);
+
     /// How fast a startled fish flees, as a multiple of its cruise speed
     /// (water.ini's `escape_speed`). Clamped to 1..6.
     void SetEscapeSpeed(double multiplier);
@@ -111,8 +123,9 @@ public:
     std::vector<TankCreature> Snapshot() const;
 
     /// Rebuild the tank from a snapshot: sheets are regenerated from the saved
-    /// species/seed on a worker, positions are set immediately. False when the
-    /// list is empty or larger than the tank.
+    /// species/seed on a worker, positions are set immediately. An empty list
+    /// is a valid tank - the reef with no fish. False only when the list is
+    /// larger than the tank.
     bool Restore(int width, int height, const std::vector<TankCreature>& creatures);
 
     /// Draw into a straight-alpha logical canvas (half the window size) for

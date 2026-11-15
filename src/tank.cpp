@@ -187,7 +187,7 @@ std::vector<TankCreature> Tank::Snapshot() const
 
 bool Tank::Restore(int width, int height, const std::vector<TankCreature>& creatures)
 {
-    if (creatures.empty() || int(creatures.size()) > kMaxTankFish)
+    if (int(creatures.size()) > kMaxTankFish)
         return false;
 
     Stop();
@@ -227,13 +227,18 @@ bool Tank::Restore(int width, int height, const std::vector<TankCreature>& creat
     pending_.clear();
     pending_.resize(fish_.size());
     stop_.store(false);
-    workers_.emplace_back(&Tank::WorkerRange, this, 0, std::move(jobs));
+    // An emptied tank restores as an emptied tank: no worker, nothing to
+    // build, and AddFish() can refill it.
+    if (!jobs.empty())
+        workers_.emplace_back(&Tank::WorkerRange, this, 0, std::move(jobs));
     return true;
 }
 
 bool Tank::AddFish()
 {
-    if (fish_.empty() || int(fish_.size()) >= kMaxTankFish)
+    // An emptied tank still accepts fish: removing the last one leaves the
+    // reef and the water, and the school can be rebuilt from here.
+    if (w_ < 1 || stop_.load() || int(fish_.size()) >= kMaxTankFish)
         return false;   // not running, or the tank is already full
 
     const int index = int(fish_.size());
@@ -419,12 +424,12 @@ void Tank::SetEscapeSpeed(double multiplier)
     escapeSpeed_ = std::clamp(multiplier, 1.0, 6.0);
 }
 
-int Tank::PokeAt(double x, double y)
+int Tank::FishAt(double x, double y) const
 {
     // Topmost first: the last drawn fish is the one under the pointer.
     for (int i = int(fish_.size()) - 1; i >= 0; --i)
     {
-        TankFish& f = fish_[size_t(i)];
+        const TankFish& f = fish_[size_t(i)];
         if (!f.ready || f.sheet.rgba.empty() || f.sheet.size < 1) continue;
 
         const ClipView c    = LookupClip(f.sheet, f.clip);
@@ -450,21 +455,46 @@ int Tank::PokeAt(double x, double y)
         const size_t o = (size_t(sy) * size_t(f.sheet.width) + size_t(sx)) * 4;
         if (f.sheet.rgba[o + 3] < 24) continue;   // empty corner of the cell
 
-        // Away from the pointer; if that side is a wall away, leave the other
-        // way. A fish cornered by the hand still gets out.
-        int away = x < f.x ? 1 : -1;
-        const double room = away > 0 ? double(w_) - 78.0 - f.x : f.x - 78.0;
-        if (room < kEscapeRoom) away = -away;
-
-        f.dir     = away;
-        f.clip    = away > 0 ? sea::ClipSwimRight : sea::ClipSwimLeft;
-        f.turning = false;
-        f.clock   = 0.0;
-        f.frame   = 0;
-        f.alarm   = kAlarmSeconds;
         return i;
     }
     return -1;
+}
+
+bool Tank::RemoveFish(int index)
+{
+    if (index < 0 || index >= int(fish_.size())) return false;
+
+    // pending_ is positional: a worker still building a sheet for slot k must
+    // not find slot k pointing at a different fish when it lands.
+    if (ReadyCount() != FishCount()) return false;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    fish_.erase(fish_.begin() + index);
+    pending_.clear();
+    pending_.resize(fish_.size());
+    return true;
+}
+
+int Tank::PokeAt(double x, double y)
+{
+    const int i = FishAt(x, y);
+    if (i < 0) return -1;
+
+    TankFish& f = fish_[size_t(i)];
+
+    // Away from the pointer; if that side is a wall away, leave the other
+    // way. A fish cornered by the hand still gets out.
+    int away = x < f.x ? 1 : -1;
+    const double room = away > 0 ? double(w_) - 78.0 - f.x : f.x - 78.0;
+    if (room < kEscapeRoom) away = -away;
+
+    f.dir     = away;
+    f.clip    = away > 0 ? sea::ClipSwimRight : sea::ClipSwimLeft;
+    f.turning = false;
+    f.clock   = 0.0;
+    f.frame   = 0;
+    f.alarm   = kAlarmSeconds;
+    return i;
 }
 
 void Tank::EmitRipple(const TankFish& f)

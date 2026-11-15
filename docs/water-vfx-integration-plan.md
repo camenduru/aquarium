@@ -306,6 +306,8 @@ bubble_count = 20
 bubble_column_1 = 0.48
 [night]
 night = 0
+[fish]
+escape_speed = 2.8
 [aquascape]
 seed = 7
 sand_y = 0.86
@@ -320,6 +322,9 @@ coral_count = 9
 - `--water-set key=value` overrides for checks; `--water-restore-defaults`.
 - `bubble_count` and `bubble_column_N` are aquarium-only additions to the demo's
   schema (the airstone); every other key keeps the demo's own ID and range.
+- `[fish] escape_speed` (1–6) is aquarium-only too: how fast a clicked fish
+  flees, as a multiple of its cruise speed. `[water]`/`[effects]`/`[aquascape]`
+  stay the demo's and the plate's own keys.
 - One live file (`water.ini`, next to `aquarium.exe`); `--water-preset <path>`
   points at an alternative file for a check or a second look, and the
   right-click menu can rewrite the file from the current defaults. No
@@ -344,7 +349,9 @@ coral_count = 9
   and seed rebuild the sheet through the generator's own preset/random paths,
   the rest puts the agent back where it was. Saves are all-or-nothing (one bad
   line fails the load), unlike a tuning file, where a bad line is skipped - a
-  half-loaded tank would be a different tank.
+  half-loaded tank would be a different tank. `count = 0` with no `fish_N` lines
+  is a valid save (an emptied tank keeps its reef), so removing the last fish
+  never makes the file unwritable.
 
 ### 7.3 Precompute the colours
 
@@ -505,13 +512,15 @@ the INI poll and the hotkeys.
 | caustic palette from the demo | lighter day palette (`0.52, 0.93, 0.87`), weighted `0.06 + 0.94·depth²` toward the sand | the demo's tint is built for an opaque seabed; over a desktop it read as noise until the light was pushed down onto the sand |
 | foam defaults | `foam_strength 0.28`, `foam_distance 3.0` | 0.22/1.8 was invisible at ghost alpha |
 | edge handling | one taper over the last **14 logical px** of the finished pixel | tint-only fading still left a rectangle of sand and caustics on the desktop |
-| click ripples | only on solid pixels (fish), plus airstone and fish turns | open water is `HTTRANSPARENT`, so Windows never delivers those clicks; pretending otherwise would need a click-through override |
+| click ripples | only on solid pixels (fish), plus airstone and fish turns; a click on a fish also **startles** it, sending it away from the pointer for 1.6 s at `escape_speed` × its cruise speed | open water is `HTTRANSPARENT`, so Windows never delivers those clicks; pretending otherwise would need a click-through override. The startle rides the same event (the demo's pointer input) and needs no new hit testing - the fish chosen is the one already drawn under the pixel |
+| fixed 1.8× rush for a startled fish | `[fish] escape_speed`, 1–6, default 2.8, read from `water.ini` and from a save | how scary a hand is turned out to be a taste, not a constant, and the INI is the only settings surface |
 | `--day-cycle <minutes>` | not built; `night` follows the local hour unless `--night`/Ctrl+Shift+T pins it | dumps must stay deterministic, and a slow cycle needs a story about resume-from-sleep for little gain |
 | `[aquascape]` keys (`sand_y`, `rock_count`, …) | present in the INI; defaults ship tuned | the panel is honest: editing them rebuilds plate + masks together |
 | no coral in the plan | five seeded species (`Branch/Fan/Brain/Kelp/Polyp`) plus `coral_count` and **Add a random coral** | the plate read as empty sand; corals are the cheapest way to make it a tank, and they reuse the rock rules (mask-clipped, shared outline, palette-only) |
 | 8–16 airstone bubbles | **20** beads per column, each with its own size/alpha wobble, 0–64 per column and up to six `bubble_column_N` outlets (128 beads total) | one density read as a white smudge at 600×340, but the wobble makes 20 read as separate beads, and the count and outlet positions belong to the INI: add or delete a line to add or remove a column, which always starts on the sand under its x |
 | named presets in a `water\` folder | one `water.ini` beside the executable, `--water-preset <path>` for alternates | no preset browser means nothing to auto-save; the menu can rewrite the file from defaults |
 | no persistence in the plan | **tank.ini**: the settings file plus `[creatures]`, saved with **Ctrl+Shift+S** / `--save-tank` and restored with **Ctrl+Shift+L** / `--load-tank` | the reef is worth coming back to, and the format that already existed covered it: same `key = value` grammar, one extra section, no JSON and no binary blob. Fish identity is (species, genome seed), so nothing is re-invented on load |
+| fish could only be added | the right-click menu also **removes the fish under the pointer** (session-only, like adding; the last fish can go too, and **Ctrl+Shift+A** puts one back from the keyboard) | a school built one click at a time needs a way back, and the tank already knows which sprite owns a pixel - the same test a click uses - so removal is an index, not new state. With no fish left there is no solid pixel to right-click, hence the keyboard route |
 
 Other decisions worth knowing: ripple radius edits compensate existing rings
 (the demo's phase-offset trick); bubble and ripple contributions are capped
