@@ -40,11 +40,22 @@ constexpr double kAlarmSeconds = 1.6;
 // picks the other side rather than turning around a moment later.
 constexpr double kEscapeRoom = 40.0;
 
+// The kinds in SeaKind order, spelled for a save file. Keep this next to the
+// enum's order; PickWeightedKind() indexes the weight table with the same order.
+const char* const kKindNames[sea::kKindCount] = {
+    "Fish", "Shark", "Whale", "Ray", "Squid", "Octopus", "Urchin"
+};
+
 /// The genome a (species, seed) pair names. A named preset pins its genes; a
-/// "Random" fish picks its kind from the seed, exactly as the spawn path has
-/// always done, so storing the pair is enough to rebuild the same animal.
+/// "Random:<Kind>" fish takes a seed-drawn animal of that kind, and the bare
+/// "Random" of an older save still picks its kind from the seed, exactly as
+/// the spawn path used to do - so storing the pair is enough to rebuild the
+/// same animal.
 sea::SeaGenome GenomeFor(const std::string& species, sea::u64 seed)
 {
+    sea::SeaKind kind;
+    if (ParseRandomSpecies(species, kind))
+        return sea::MakeGenome(sea::kRandomSpecies, seed, nullptr, kind);
     if (species.empty() || species == sea::kRandomSpecies)
         return sea::RandomGenome(sea::SeaKind((unsigned(seed) >> 3) % 7u), seed);
     return sea::MakeGenome(species, seed);
@@ -77,6 +88,64 @@ ClipView LookupClip(const sea::SeaSheet& sheet, int clip)
 }
 
 } // namespace
+
+const char* KindName(sea::SeaKind kind)
+{
+    const int i = int(kind);
+    return (i >= 0 && i < sea::kKindCount) ? kKindNames[i] : nullptr;
+}
+
+std::string RandomSpeciesName(sea::SeaKind kind)
+{
+    const char* name = KindName(kind);
+    if (name == nullptr) return sea::kRandomSpecies;
+    return std::string(sea::kRandomSpecies) + ":" + name;
+}
+
+bool ParseRandomSpecies(const std::string& species, sea::SeaKind& kind)
+{
+    if (species.rfind("Random:", 0) != 0) return false;
+    const std::string tail = species.substr(7);
+    for (int i = 0; i < sea::kKindCount; ++i)
+    {
+        if (tail == kKindNames[i])
+        {
+            kind = sea::SeaKind(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+int PickWeightedKind(const double (&weights)[sea::kKindCount], double u01)
+{
+    double total = 0.0;
+    for (double w : weights)
+        total += std::max(0.0, w);
+
+    // Every weight at zero would make a random fish impossible; fall back to
+    // even odds instead of refusing, so an INI with all zeros is not a trap.
+    if (total <= 0.0)
+        return std::clamp(int(u01 * double(sea::kKindCount)), 0, sea::kKindCount - 1);
+
+    double left = std::clamp(u01, 0.0, 0.999999999) * total;
+    for (int i = 0; i < sea::kKindCount; ++i)
+    {
+        left -= std::max(0.0, weights[i]);
+        if (left < 0.0) return i;
+    }
+
+    // Rounding tail: the last kind with any weight.
+    for (int i = sea::kKindCount - 1; i >= 0; --i)
+        if (weights[i] > 0.0) return i;
+    return 0;
+}
+
+void Tank::SetKindWeights(const double (&weights)[sea::kKindCount])
+{
+    for (int i = 0; i < sea::kKindCount; ++i)
+        kindWeight_[i] = std::max(0.0, weights[i]);
+}
 
 void Tank::InitFish(TankFish& f, std::mt19937& rng)
 {
@@ -126,7 +195,12 @@ void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
     for (int i = 0; i < fishCount; ++i)
     {
         TankFish& f = fish_[size_t(i)];
-        f.species   = i < kSpeciesCount ? startOrder_[size_t(i)] : std::string("Random");
+        // The pool covers the first few; the rest are random animals, and
+        // their kind follows water.ini's weights.
+        f.species   = i < kSpeciesCount
+                    ? startOrder_[size_t(i)]
+                    : RandomSpeciesName(sea::SeaKind(
+                          PickWeightedKind(kindWeight_, double(rng()) / 4294967296.0)));
         f.seed      = seed_ + sea::u64(i) * 37 + 1;
         InitFish(f, rng);
         jobs.push_back(CreatureJob{ f.species, f.seed });
@@ -250,7 +324,8 @@ bool Tank::AddFish()
     std::mt19937 rng(uint32_t(salt >> 32) ^ uint32_t(salt));
 
     TankFish added;
-    added.species = "Random";
+    added.species = RandomSpeciesName(sea::SeaKind(PickWeightedKind(
+        kindWeight_, double(salt >> 11) * (1.0 / 9007199254740992.0))));
     added.seed    = salt;
     InitFish(added, rng);
 

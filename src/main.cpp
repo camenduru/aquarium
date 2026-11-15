@@ -301,6 +301,23 @@ void RebuildAquascape()
     g_water.InvalidateStatic();
 }
 
+/// Hand the fish-side tuning to the tank: how hard a poke scares a fish, and
+/// the odds of each kind when a random animal is added. Called on startup, on
+/// a hot reload and after a save is loaded, so the tank and the file can never
+/// disagree.
+void ApplyFishTuning()
+{
+    g_tank.SetEscapeSpeed(g_tuning.escapeSpeed);
+
+    const double weights[sea::kKindCount] = {
+        double(g_tuning.weightFish),    double(g_tuning.weightShark),
+        double(g_tuning.weightWhale),   double(g_tuning.weightRay),
+        double(g_tuning.weightSquid),   double(g_tuning.weightOctopus),
+        double(g_tuning.weightUrchin),
+    };
+    g_tank.SetKindWeights(weights);
+}
+
 /// Read water.ini (if present), then re-apply the command line overrides on
 /// top so a hot reload can never silently discard a flag.
 void ReloadWater(bool announce)
@@ -331,7 +348,7 @@ void ReloadWater(bool announce)
         g_spec.coralCount = std::clamp(g_corals, 0, water::kMaxCorals);
 
     water::BuildPalette(g_tuning, g_palette);
-    g_tank.SetEscapeSpeed(g_tuning.escapeSpeed);
+    ApplyFishTuning();
 
     // Absorb a ripple-speed edit so rings already on the water keep their
     // radius instead of jumping (the demo's phase-offset trick).
@@ -414,7 +431,7 @@ bool LoadTankFrom(const std::string& path)
         g_spec.coralCount = std::clamp(g_corals, 0, water::kMaxCorals);
 
     water::BuildPalette(g_tuning, g_palette);
-    g_tank.SetEscapeSpeed(g_tuning.escapeSpeed);
+    ApplyFishTuning();
     RebuildAquascape();
 
     // The rings belonged to the tank that was just replaced.

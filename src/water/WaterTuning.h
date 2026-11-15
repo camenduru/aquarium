@@ -152,6 +152,19 @@ struct WaterTuning
     /// The alarm lasts 1.6 s and eases from this value back to 1.
     float escapeSpeed = 2.8f;
 
+    /// Relative odds of each kind when a random fish is added, in SeaKind
+    /// order (fish, shark, whale, ray, squid, octopus, urchin). Only the
+    /// ratios matter; 0 keeps that kind out of the random draw entirely.
+    /// The defaults are a reef ladder: small fish are the school, urchins are
+    /// a find.
+    int weightFish    = 30;
+    int weightShark   = 12;
+    int weightWhale   = 8;
+    int weightRay     = 5;
+    int weightSquid   = 3;
+    int weightOctopus = 2;
+    int weightUrchin  = 1;
+
     // ---- effect toggles ----------------------------------------
     bool depthEnabled      = true;
     bool refractionEnabled = true;

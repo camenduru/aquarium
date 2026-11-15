@@ -22,6 +22,10 @@ namespace sea {
 
 enum class SeaKind { Fish = 0, Shark, Whale, Ray, Squid, Octopus, Urchin };
 
+/// How many kinds there are: a per-kind weight table (see the tank) is this
+/// long, in SeaKind order.
+constexpr int kKindCount = 7;
+
 /// Caudal fin outline. "Flukes" lie flat (whales), "heterocercal" is the shark tail.
 enum class TailShape {
     Forked = 0, Rounded, Truncate, Lunate, Pointed, Fan, Heterocercal, Flukes, None

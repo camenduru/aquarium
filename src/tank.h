@@ -31,6 +31,23 @@
 /// generation-time budget as much as a taste one.
 constexpr int kMaxTankFish = 128;
 
+/// The kind's name as it appears in a save: "Fish", "Urchin", ...
+const char* KindName(sea::SeaKind kind);
+
+/// A random animal of one kind, spelled the way a save stores it
+/// ("Random:Urchin"). The kind is part of the species name, so the same seed
+/// rebuilds the same animal even after the rarity weights are edited.
+std::string RandomSpeciesName(sea::SeaKind kind);
+
+/// "Random:Urchin" -> SeaKind::Urchin. False for any other spelling.
+bool ParseRandomSpecies(const std::string& species, sea::SeaKind& kind);
+
+/// Weighted choice from a kind-weight table (SeaKind order) for `u01` in
+/// [0,1). Negative weights read as zero; an all-zero table falls back to even
+/// odds, so a random fish is always possible. Free of the tank so the odds can
+/// be checked without generating a single sprite.
+int PickWeightedKind(const double (&weights)[sea::kKindCount], double u01);
+
 struct TankFish
 {
     sea::SeaSheet sheet;
@@ -114,6 +131,12 @@ public:
     /// (water.ini's `escape_speed`). Clamped to 1..6.
     void SetEscapeSpeed(double multiplier);
 
+    /// Relative chance of each kind when a random fish is added, in SeaKind
+    /// order (fish, shark, whale, ray, squid, octopus, urchin), from
+    /// water.ini's `[fish] *_weight` keys. Negative values read as zero; all
+    /// zero falls back to even odds so a random fish is always possible.
+    void SetKindWeights(const double (&weights)[sea::kKindCount]);
+
     void Resize(int width, int height);
     void Update(double dt);
     void Draw(uint8_t* premultipliedBgra, int width, int height);
@@ -177,4 +200,8 @@ private:
 
     /// water.ini's escape_speed: a startled fish's speed, relative to cruise.
     double escapeSpeed_ = 2.8;
+
+    /// Relative odds per kind for a "Random" fish, SeaKind order. Even until
+    /// water.ini says otherwise.
+    double kindWeight_[sea::kKindCount] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
 };

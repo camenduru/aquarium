@@ -140,6 +140,15 @@ const FloatDef kFloats[] = {
 
 const IntDef kInts[] = {
     { "falls", "bubble_count", &WaterTuning::bubbleCount, 0, 64 },
+    // [fish] - relative odds of each kind for a random fish. The order is the
+    // generator's SeaKind order.
+    { "fish", "fish_weight",    &WaterTuning::weightFish,    0, 1000 },
+    { "fish", "shark_weight",   &WaterTuning::weightShark,   0, 1000 },
+    { "fish", "whale_weight",   &WaterTuning::weightWhale,   0, 1000 },
+    { "fish", "ray_weight",     &WaterTuning::weightRay,     0, 1000 },
+    { "fish", "squid_weight",   &WaterTuning::weightSquid,   0, 1000 },
+    { "fish", "octopus_weight", &WaterTuning::weightOctopus, 0, 1000 },
+    { "fish", "urchin_weight",  &WaterTuning::weightUrchin,  0, 1000 },
 };
 
 const BoolDef kBools[] = {
@@ -559,7 +568,7 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
         if (std::strcmp(name, "ripples") == 0)  return "rings from clicks, turns and the airstone";
         if (std::strcmp(name, "falls") == 0)    return "airstone bubble columns (the demo's waterfall terms)";
         if (std::strcmp(name, "night") == 0)    return "moon band";
-        if (std::strcmp(name, "fish") == 0)     return "how fast a clicked fish flees (multiple of cruise speed)";
+        if (std::strcmp(name, "fish") == 0)     return "how a clicked fish flees, and the odds of each kind when a random fish is added";
         return nullptr;
     };
 

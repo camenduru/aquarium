@@ -104,7 +104,12 @@ bool ParseCreature(const std::string& value, TankCreature& out, std::string& err
         return false;
     }
 
-    if (f[0].empty() || (sea::FindSpecies(f[0]) == nullptr && f[0] != sea::kRandomSpecies))
+    // A named preset, the bare "Random" of an older save, or the weighted
+    // kind spelling this build writes ("Random:Urchin").
+    sea::SeaKind kind = sea::SeaKind::Fish;
+    if (f[0].empty() ||
+        (sea::FindSpecies(f[0]) == nullptr && f[0] != sea::kRandomSpecies &&
+         !ParseRandomSpecies(f[0], kind)))
     {
         error = "unknown species '" + f[0] + "'";
         return false;
