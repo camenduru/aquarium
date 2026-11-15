@@ -1,18 +1,20 @@
 # ================================================================
-# AQUARIUM - does clicking a fish startle it, and by how much?
+# AQUARIUM - does clicking a fish startle it, at escape_speed?
 # ----------------------------------------------------------------
-# Drives the real window with one fish. It saves the tank, posts a real
-# WM_LBUTTONUP just beside that fish, waits, saves again, and compares
-# the travel against the speed the save itself says the tank is tuned to
-# (`escape_speed`). No hit test is needed to find the fish: the save
-# gives its position, and PokeAt's own alpha test decides the click.
+# Drives the real window with one fish: save the tank, post a real
+# WM_LBUTTONUP beside that fish, wait, save again, and compare the
+# travel with the speed the save reports (`escape_speed`).
 #
 #   powershell -File tools\poke_check.ps1
 #   powershell -File tools\poke_check.ps1 -ExtraArgs '--water-set','escape_speed=5'
 #
-# The alarm lasts 1.6 s and eases from escape_speed back to 1, so over a
-# gap T the fish travels speed*(T + (S-1)*(T - T^2/3.2)) in the escape
-# direction.
+# The click lands on the side the fish is already facing when that side
+# has room, so it runs without reversing and the two saves bracket one
+# steady escape. The alarm lasts 1.6 s and eases from S to 1, so over a
+# gap T under 1.6 s the distance is speed*(T + (S-1)*(T - T^2/3.2)).
+#
+# Whoever else is clicking the tank can add startled fish and spoil the
+# measurement; the check prints what it saw, so a rerun is enough.
 # ================================================================
 param([string[]] $ExtraArgs = @())
 $ErrorActionPreference = 'Stop'
@@ -71,44 +73,44 @@ $ws = New-Object -ComObject WScript.Shell
 $tA = Save-Tank 'a.ini'
 $before = Read-Fish 'a.ini'
 
-# Where the fish is now: the save is a few hundred ms old, and it keeps
-# swimming while we get here. Poke just beside the centre, on the side with
-# room to run.
+# Where it is now: the save is a moment old and it keeps swimming.
 $now = Get-Date
 $xNow = $before.x + $before.dir * $before.speed * ($now - $tA).TotalSeconds
 $xNow = [math]::Min([math]::Max($xNow, 90), $winW - 90)
-$roomRight = $winW - 78 - $xNow
-$roomLeft  = $xNow - 78
-if ($roomRight -ge $roomLeft) { $away = 1;  $clickX = [int]($xNow - 6) }
-else                          { $away = -1; $clickX = [int]($xNow + 6) }
+
+# Run the way it already faces when that side has room; otherwise turn it.
+$roomAhead = if ($before.dir -gt 0) { $winW - 78 - $xNow } else { $xNow - 78 }
+$away = if ($roomAhead -gt 200) { $before.dir } else { -$before.dir }
+$clickX = [int]($xNow - $away * 6)
 $clickY = [int]$before.baseY
 
-Write-Output ("fish: {0}, x {1:N1}, speed {2:N1}, escape_speed {3:N1}, room {4:N0}/{5:N0}" -f `
-    $before.species, $xNow, $before.speed, $before.escape, $roomLeft, $roomRight)
+Write-Output ("fish: {0}, x {1:N1}, speed {2:N1}, escape_speed {3:N1}, room ahead {4:N0}" -f `
+    $before.species, $xNow, $before.speed, $before.escape, $roomAhead)
 
 $n0 = Startles
 $t0 = Get-Date
 Poke $clickX $clickY
 Start-Sleep -Milliseconds 800
 $tB = Save-Tank 'b.ini'
-$gap = ($tB - $t0).TotalSeconds
 
 $ws.SendKeys('^+q')
 Start-Sleep -Seconds 3
 if (-not $p.HasExited) { Stop-Process -Name aquarium -Force }
 
 $after = Read-Fish 'b.ini'
+$T = ($tB - $tA).TotalSeconds
+$s = $before.escape
+$expected = $away * $before.speed * ($T + ($s - 1.0) * ($T - $T * $T / 3.2))
 $dx = $after.x - $before.x
-$s  = $before.escape
-$expected = $away * $before.speed * ($gap + ($s - 1.0) * ($gap - $gap * $gap / 3.2))
-$err = if ($expected -ne 0) { [math]::Abs($dx - $expected) / [math]::Abs($expected) } else { 1 }
+$err = [math]::Abs($dx - $expected) / [math]::Abs($expected)
+$newStartle = (Startles) -gt $n0
 
-Write-Output ("click {0},{1}  gap {2:N2} s  startled: {3}" -f $clickX, $clickY, $gap, ((Startles) -gt $n0))
+Write-Output ("click {0},{1}  span {2:N2} s  startled: {3}" -f $clickX, $clickY, $T, $newStartle)
 Write-Output ("dx {0:N1} px (expected {1:N1}), facing {2} (expected {3}), error {4:P0}" -f `
     $dx, $expected, $after.dir, $away, $err)
 
-$ok = ((Startles) -gt $n0) -and ($err -lt 0.30) -and ($after.dir -eq $away)
+$ok = $newStartle -and ($err -lt 0.30) -and ($after.dir -eq $away)
 Write-Output ''
 if ($ok) { Write-Output '[ok] the clicked fish bolted away at the configured speed' }
-else { Write-Output '[FAIL] the click did not startle the fish as expected' }
+else { Write-Output '[FAIL] click and escape did not line up' }
 exit ([int](-not $ok))
