@@ -137,7 +137,7 @@ const FloatDef kFloats[] = {
 };
 
 const IntDef kInts[] = {
-    { "falls", "bubble_count", &WaterTuning::bubbleCount, 0, kMaxBubbles },
+    { "falls", "bubble_count", &WaterTuning::bubbleCount, 0, 64 },
 };
 
 const BoolDef kBools[] = {
@@ -409,23 +409,17 @@ bool ApplySetting(const std::string& key, const std::string& value,
         return true;
     }
 
-    // [falls] outlets: "bubble_column_N = x,y" in tank fractions. Repeatable
-    // lines; deleting one removes that bubble column on the next reload.
+    // [falls] outlets: "bubble_column_N = x" along the sand. Repeatable lines;
+    // deleting one removes that bubble column on the next reload.
     if (k.rfind("bubble_column", 0) == 0)
     {
-        const size_t comma = value.find(',');
-        if (comma == std::string::npos)
+        float x = 0.0f;
+        if (!ParseFloat(value, x))
         {
-            error = k + ": expected x,y (fractions of the tank, e.g. 0.16,0.90)";
+            error = k + ": expected x (a fraction of the tank width, e.g. 0.16)";
             return false;
         }
-        float x = 0.0f, y = 0.0f;
-        if (!ParseFloat(value.substr(0, comma), x) || !ParseFloat(value.substr(comma + 1), y))
-        {
-            error = k + ": expected x,y (fractions of the tank, e.g. 0.16,0.90)";
-            return false;
-        }
-        if (x < 0.0f || x > 1.0f || y < 0.0f || y > 1.0f)
+        if (x < 0.0f || x > 1.0f)
         {
             error = k + ": outside [0, 1]";
             return false;
@@ -437,7 +431,7 @@ bool ApplySetting(const std::string& key, const std::string& value,
             error = msg.str();
             return false;
         }
-        tuning.bubbleEmitters.push_back({ x, y });
+        tuning.bubbleEmitters.push_back({ x });
         return true;
     }
 
@@ -556,14 +550,15 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
                 file << def.key << " = " << (tuning.*(def.field)) << "\n";
 
         if (std::strcmp(name, "falls") != 0) return;
-        file << "; bubbling outlets, one line each; x,y are fractions of the tank.\n"
-                "; add a line to add a column, delete one to remove it. With no line\n"
-                "; at all the single outlet sits on the stone's airstone.\n";
+        file << "; bubbling outlets, one line each; x is a fraction of the tank\n"
+                "; width and the column rises from the sand at that x. Add a line\n"
+                "; to add a column, delete one to remove it. With no line at all\n"
+                "; the single outlet sits on the stone's airstone.\n";
         if (tuning.bubbleEmitters.empty())
-            file << "; bubble_column_1 = 0.16,0.90\n";
+            file << "; bubble_column_1 = 0.16\n";
         for (size_t i = 0; i < tuning.bubbleEmitters.size(); ++i)
             file << "bubble_column_" << (i + 1) << " = "
-                 << tuning.bubbleEmitters[i].x << "," << tuning.bubbleEmitters[i].y << "\n";
+                 << tuning.bubbleEmitters[i].x << "\n";
     };
     for (const FloatDef& def : kFloats)
     {

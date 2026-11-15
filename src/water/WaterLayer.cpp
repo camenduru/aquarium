@@ -352,27 +352,31 @@ void WaterLayer::Composite(const uint8_t* content, uint8_t* canvas,
     const float aspect = std::max(0.2f, t.rippleAspect);
 
     // ---- bubble columns, resolved once -------------------------
+    // Each outlet owns a narrow band; the composite tests those bands before
+    // touching any bead, so extra outlets cost a couple of range checks in the
+    // rest of the frame instead of another full bead loop.
     struct Bubble { float x = 0.0f, y = 0.0f, k = 0.0f, r = 1.9f; };
+    struct Band { float x0 = 0.0f, x1 = 0.0f, y0 = 0.0f, y1 = 0.0f; int first = 0, count = 0; };
     Bubble bubbles[kMaxBubbles];
+    Band bands[kMaxBubbleColumns];
     int bubbleCount = 0;
+    int bandCount = 0;
     if (t.waterfallEnabled && t.bubbleCount > 0)
     {
         // Outlets come from water.ini; with none configured the stone's
         // airstone is the single outlet, so a plain file behaves as before.
+        // Each outlet is an x along the sand, and the column always starts on
+        // the sand horizon at that x.
         float outletX[kMaxBubbleColumns] = {};
-        float outletY[kMaxBubbleColumns] = {};
         int outletCount = 0;
         for (const BubbleEmitter& e : t.bubbleEmitters)
         {
             if (outletCount >= kMaxBubbleColumns) break;
-            outletX[outletCount] = e.x * float(w_);
-            outletY[outletCount] = e.y * float(h_);
-            ++outletCount;
+            outletX[outletCount++] = std::clamp(e.x * float(w_), 0.0f, float(w_ - 1));
         }
         if (outletCount == 0)
         {
             outletX[0] = m.AirstoneX();
-            outletY[0] = m.AirstoneY();
             outletCount = 1;
         }
 
@@ -384,13 +388,20 @@ void WaterLayer::Composite(const uint8_t* content, uint8_t* canvas,
         // deterministic size and alpha wobble: with many beads on screen at
         // once, a uniform grid would read as a bright bar, while varied ones
         // read as separate rising bubbles.
-        for (int c = 0; c < outletCount && bubbleCount < kMaxBubbles; ++c)
+        for (int c = 0; c < outletCount && bandCount < kMaxBubbleColumns; ++c)
         {
-            const float originY = std::clamp(outletY[c], surfaceY + 2.0f, bottomY);
             const int beads = std::min(t.bubbleCount, kMaxBubbles - bubbleCount);
+            if (beads <= 0) break;
             const float half = (float(beads) - 1.0f) * 0.5f;
             const float spacing = beads > 1 ? 18.0f / (float(beads) - 1.0f) : 0.0f;
 
+            Band& band = bands[bandCount++];
+            band.first = bubbleCount;
+            // The column leaves the sand, not the middle of the water: the
+            // outlet's y is the sand horizon under its x.
+            const float sandY = m.SandAt(int(std::clamp(outletX[c], 0.0f, float(w_ - 1))));
+            const float originY = std::clamp(sandY - 3.0f, surfaceY + 2.0f, bottomY);
+            float x0 = outletX[c], x1 = outletX[c], y0 = originY, y1 = originY, rMax = 0.0f;
             for (int k = 0; k < beads; ++k)
             {
                 const float phase = std::fmod(float(clock) * 0.42f + float(k) / float(beads), 1.0f);
@@ -401,26 +412,17 @@ void WaterLayer::Composite(const uint8_t* content, uint8_t* canvas,
                 b.y = originY + (surfaceY - originY) * phase;
                 b.k = 0.8f * (1.0f - phase) * (0.72f + 0.5f * wobble);
                 b.r = 1.5f + 0.55f * wobble;
+
+                if (k == 0) { x0 = x1 = b.x; y0 = y1 = b.y; }
+                x0 = std::min(x0, b.x); x1 = std::max(x1, b.x);
+                y0 = std::min(y0, b.y); y1 = std::max(y1, b.y);
+                rMax = std::max(rMax, b.r);
             }
+            band.count = bubbleCount - band.first;
+            band.x0 = x0 - rMax; band.x1 = x1 + rMax;
+            band.y0 = y0 - rMax; band.y1 = y1 + rMax;
         }
     }
-
-    // The column is a narrow band: one x test keeps the bubble loop out of the
-    // other ~98 % of the frame.
-    float bubbleX0 = 0.0f, bubbleX1 = 0.0f, bubbleY0 = 0.0f, bubbleY1 = 0.0f;
-    float bubbleR = 2.1f;
-    for (int i = 0; i < bubbleCount; ++i)
-    {
-        const Bubble& bb = bubbles[i];
-        if (i == 0) { bubbleX0 = bubbleX1 = bb.x; bubbleY0 = bubbleY1 = bb.y; }
-        bubbleX0 = std::min(bubbleX0, bb.x);
-        bubbleX1 = std::max(bubbleX1, bb.x);
-        bubbleY0 = std::min(bubbleY0, bb.y);
-        bubbleY1 = std::max(bubbleY1, bb.y);
-        bubbleR = std::max(bubbleR, bb.r);
-    }
-    bubbleX0 -= bubbleR; bubbleX1 += bubbleR;
-    bubbleY0 -= bubbleR; bubbleY1 += bubbleR;
 
     constexpr float kInv255 = 1.0f / 255.0f;
 
@@ -529,10 +531,12 @@ void WaterLayer::Composite(const uint8_t* content, uint8_t* canvas,
             }
 
             // ---- bubbles ----------------------------------------
-            if (bubbleCount > 0 && px >= bubbleX0 && px <= bubbleX1 &&
-                py >= bubbleY0 && py <= bubbleY1)
+            for (int c = 0; c < bandCount; ++c)
             {
-                for (int i = 0; i < bubbleCount; ++i)
+                const Band& bd = bands[c];
+                if (px < bd.x0 || px > bd.x1 || py < bd.y0 || py > bd.y1) continue;
+
+                for (int i = bd.first; i < bd.first + bd.count; ++i)
                 {
                     const Bubble& bb = bubbles[i];
                     const float dx = px - bb.x;

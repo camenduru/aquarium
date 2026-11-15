@@ -303,7 +303,7 @@ clarity = 0.65
 caustic_strength = 0.27
 [falls]
 bubble_count = 20
-bubble_column_1 = 0.16,0.90
+bubble_column_1 = 0.48
 [night]
 night = 0
 [aquascape]
@@ -318,6 +318,8 @@ coral_count = 9
   check, no file watcher needed — the file is also picked up automatically within
   half a second) so tuning is still live.
 - `--water-set key=value` overrides for checks; `--water-restore-defaults`.
+- `bubble_count` and `bubble_column_N` are aquarium-only additions to the demo's
+  schema (the airstone); every other key keeps the demo's own ID and range.
 - One live file (`water.ini`, next to `aquarium.exe`); `--water-preset <path>`
   points at an alternative file for a check or a second look, and the
   right-click menu can rewrite the file from the current defaults. No
@@ -327,9 +329,10 @@ coral_count = 9
   `parameter_store.gd`, no partial application.
 - Changing an `[aquascape]` key rebuilds the plate and the masks together, because
   they must stay in agreement.
-- Bubble outlets are a **list**: every `bubble_column_N = x,y` line is one
-  rising column, and the list is rebuilt from the file on each load, so adding
-  or deleting a line adds or removes that column without leaving stale state.
+- Bubble outlets are a **list**: every `bubble_column_N = x` line is one rising
+  column that leaves the sand at that x, and the list is rebuilt from the file on
+  each load, so adding or deleting a line adds or removes that column without
+  leaving stale state.
 - No JSON reader in v1. Inert-but-declared IDs stay in the table so a future
   JSON/preset bridge is a loader, not a schema change.
 
@@ -493,7 +496,7 @@ hit-mask marking); `src/transparent_window.*` gained the hit mask and
 | `--day-cycle <minutes>` | not built; `night` follows the local hour unless `--night`/Ctrl+Shift+T pins it | dumps must stay deterministic, and a slow cycle needs a story about resume-from-sleep for little gain |
 | `[aquascape]` keys (`sand_y`, `rock_count`, …) | present in the INI; defaults ship tuned | the panel is honest: editing them rebuilds plate + masks together |
 | no coral in the plan | five seeded species (`Branch/Fan/Brain/Kelp/Polyp`) plus `coral_count` and **Add a random coral** | the plate read as empty sand; corals are the cheapest way to make it a tank, and they reuse the rock rules (mask-clipped, shared outline, palette-only) |
-| 8–16 airstone bubbles | **20** beads per column, each with its own size/alpha wobble, 0–64 per column and up to six `bubble_column_N` outlets (128 beads total) | one density read as a white smudge at 600×340, but the wobble makes 20 read as separate beads, and the count and outlet positions belong to the INI: add or delete a line to add or remove a column |
+| 8–16 airstone bubbles | **20** beads per column, each with its own size/alpha wobble, 0–64 per column and up to six `bubble_column_N` outlets (128 beads total) | one density read as a white smudge at 600×340, but the wobble makes 20 read as separate beads, and the count and outlet positions belong to the INI: add or delete a line to add or remove a column, which always starts on the sand under its x |
 | named presets in a `water\` folder | one `water.ini` beside the executable, `--water-preset <path>` for alternates | no preset browser means nothing to auto-save; the menu can rewrite the file from defaults |
 
 Other decisions worth knowing: ripple radius edits compensate existing rings

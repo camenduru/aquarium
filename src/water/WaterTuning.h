@@ -41,12 +41,11 @@ constexpr int kMaxBubbles = 128;
 /// How many bubbling outlets water.ini may define (one bubble column each).
 constexpr int kMaxBubbleColumns = 6;
 
-/// One bubbling outlet, in fractions of the tank: (0,0) top-left, (1,1)
-/// bottom-right. The column rises from y towards the surface.
+/// One bubbling outlet: a position along the sand bed, as a fraction of the
+/// tank width. The column always rises from the sand horizon at that x.
 struct BubbleEmitter
 {
     float x = 0.0f;
-    float y = 0.0f;
 };
 
 struct AquascapeSpec

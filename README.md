@@ -1,6 +1,6 @@
 # Aquarium
 
-> **1.3 sextillion sea creatures, no third-party DLLs, in 836 KB.**
+> **1.3 sextillion sea creatures, no third-party DLLs, in 842 KB.**
 
 https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
 
@@ -232,19 +232,22 @@ and where the columns leave the tank:
 ```
 [falls]
 bubble_count = 20
-bubble_column_1 = 0.16,0.90
+bubble_column_1 = 0.48
 ```
 
 `bubble_count` (0-64) is the number of beads in **each** column. Every
-`bubble_column_N` line is one outlet, written as `x,y` in fractions of the tank
-(0,0 is the top left), and the column rises from there to the surface. Add a
-line to add a column, delete it to remove that column: the list is rebuilt from
-the file on every load, so nothing stale survives a reload. Up to six outlets
-are accepted, and at most 128 beads are drawn in total.
+`bubble_column_N` line is one outlet, written as `x` in fractions of the tank
+width; the column always leaves the **sand** at that x and rises to the
+surface, so an outlet never starts in mid-water. Add a line to add a column,
+delete it to remove that column: the list is rebuilt from the file on every
+load, so nothing stale survives a reload. Up to six outlets are accepted, and
+at most 128 beads are drawn in total.
 
 With no `bubble_column_N` line the single outlet stays on the stone's airstone,
 which is the default, so an untouched `water.ini` looks like the original
 column. The airstone ripple rings cycle through the configured outlets.
+`bubble_count` and `bubble_column_N` are aquarium-only keys; everything else in
+the file keeps the demo's own IDs.
 
 ## How many creatures can be generated
 
@@ -324,7 +327,7 @@ or, without CMake (MSVC only):
 bin/aquarium.exe
 ```
 
-The release build is one self-contained **836 KB** executable (`856,064 bytes`)
+The release build is one self-contained **842 KB** executable (`862,208 bytes`)
 with no third-party DLLs, no runtime install and no assets folder - the 1.3
 sextillion creatures, the sand, the rocks and the reef are all generated inside
 it.

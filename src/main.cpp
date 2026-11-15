@@ -387,7 +387,9 @@ void TickAirstone(double dt)
     }
     const water::BubbleEmitter& e = outlets[std::size_t(g_airstoneOutlet) % outlets.size()];
     g_airstoneOutlet = (g_airstoneOutlet + 1) % int(outlets.size());
-    g_ripples.Add(e.x * float(g_logicalW), e.y * float(g_logicalH), g_clock, 0.4f);
+    const float x = e.x * float(g_logicalW);
+    const float y = g_masks.SandAt(int(std::clamp(x, 0.0f, float(g_logicalW - 1)))) - 3.0f;
+    g_ripples.Add(x, y, g_clock, 0.4f);
 }
 
 /// Plate, fish, front rock - in that order, into the straight-alpha logical
