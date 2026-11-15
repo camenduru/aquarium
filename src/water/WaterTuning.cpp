@@ -439,15 +439,10 @@ bool ApplySetting(const std::string& key, const std::string& value,
     return false;
 }
 
-bool LoadIni(const std::string& path, WaterTuning& tuning, AquascapeSpec& spec,
-             IniReport& report)
+bool LoadIniText(const std::string& path, std::string_view text,
+                 WaterTuning& tuning, AquascapeSpec& spec, IniReport& report)
 {
-    std::ifstream file(path);
-    if (!file)
-    {
-        report.errors.push_back("cannot open " + path);
-        return false;
-    }
+    std::istringstream file{ std::string(text) };
 
     std::string line;
     std::string section;
@@ -512,8 +507,24 @@ bool LoadIni(const std::string& path, WaterTuning& tuning, AquascapeSpec& spec,
     return report.errors.empty();
 }
 
+bool LoadIni(const std::string& path, WaterTuning& tuning, AquascapeSpec& spec,
+             IniReport& report)
+{
+    std::ifstream file(path);
+    if (!file)
+    {
+        report.errors.push_back("cannot open " + path);
+        return false;
+    }
+
+    std::ostringstream text;
+    text << file.rdbuf();
+    return LoadIniText(path, text.str(), tuning, spec, report);
+}
+
 bool WriteIni(const std::string& path, const WaterTuning& tuning,
-              const AquascapeSpec& spec, std::string& error)
+              const AquascapeSpec& spec, std::string& error,
+              const std::vector<std::string>& header)
 {
     std::ofstream file(path);
     if (!file)
@@ -522,11 +533,19 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
         return false;
     }
 
-    file << "; aquarium water settings\n"
-            "; keys are the pixel-art-water-vfx demo's IDs; edit and the running\n"
-            "; aquarium reloads this file automatically within half a second.\n"
-            "; every value is clamped to its documented range; a bad line is\n"
-            "; reported on the console and the previous value stays.\n";
+    if (!header.empty())
+    {
+        for (const std::string& line : header)
+            file << "; " << line << "\n";
+    }
+    else
+    {
+        file << "; aquarium water settings\n"
+                "; keys are the pixel-art-water-vfx demo's IDs; edit and the running\n"
+                "; aquarium reloads this file automatically within half a second.\n"
+                "; every value is clamped to its documented range; a bad line is\n"
+                "; reported on the console and the previous value stays.\n";
+    }
 
     // The file is the whole settings UI, so each section says what it moves.
     const auto blurb = [](const char* name) -> const char*

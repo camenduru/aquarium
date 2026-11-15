@@ -32,6 +32,16 @@ constexpr int kSpeciesCount = int(sizeof(kSpecies) / sizeof(kSpecies[0]));
 constexpr int kCell       = 64;   // sprite cell
 constexpr int kSmoothness = 2;    // 16 swim frames / 20 turn frames
 
+/// The genome a (species, seed) pair names. A named preset pins its genes; a
+/// "Random" fish picks its kind from the seed, exactly as the spawn path has
+/// always done, so storing the pair is enough to rebuild the same animal.
+sea::SeaGenome GenomeFor(const std::string& species, sea::u64 seed)
+{
+    if (species.empty() || species == sea::kRandomSpecies)
+        return sea::RandomGenome(sea::SeaKind((unsigned(seed) >> 3) % 7u), seed);
+    return sea::MakeGenome(species, seed);
+}
+
 struct ClipView
 {
     int    row    = 0;
@@ -103,17 +113,21 @@ void Tank::Start(int width, int height, sea::u64 seed, int fishCount)
     std::shuffle(startOrder_.begin(), startOrder_.end(), rng);
 
     fish_.assign(size_t(fishCount), TankFish());
+    std::vector<CreatureJob> jobs;
+    jobs.reserve(size_t(fishCount));
     for (int i = 0; i < fishCount; ++i)
     {
         TankFish& f = fish_[size_t(i)];
         f.species   = i < kSpeciesCount ? startOrder_[size_t(i)] : std::string("Random");
+        f.seed      = seed_ + sea::u64(i) * 37 + 1;
         InitFish(f, rng);
+        jobs.push_back(CreatureJob{ f.species, f.seed });
     }
 
     pending_.clear();
     pending_.resize(size_t(fishCount));
     stop_.store(false);
-    workers_.emplace_back(&Tank::WorkerRange, this, 0, fishCount, false, sea::u64(0), &startOrder_);
+    workers_.emplace_back(&Tank::WorkerRange, this, 0, std::move(jobs));
 }
 
 void Tank::Stop()
@@ -141,6 +155,74 @@ void Tank::Resize(int width, int height)
     }
 }
 
+std::vector<TankCreature> Tank::Snapshot() const
+{
+    std::vector<TankCreature> out;
+    out.reserve(fish_.size());
+    for (const TankFish& f : fish_)
+    {
+        TankCreature c;
+        c.species  = f.species;
+        c.seed     = f.seed;
+        c.x        = f.x;
+        c.baseY    = f.baseY;
+        c.speed    = f.speed;
+        c.dir      = f.dir;
+        c.bobPhase = f.bobPhase;
+        c.bobAmp   = f.bobAmp;
+        c.bobSpeed = f.bobSpeed;
+        c.alpha    = f.alpha;
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+bool Tank::Restore(int width, int height, const std::vector<TankCreature>& creatures)
+{
+    if (creatures.empty() || int(creatures.size()) > kMaxTankFish)
+        return false;
+
+    Stop();
+
+    w_ = std::max(width, 64);
+    h_ = std::max(height, 64);
+
+    fish_.assign(creatures.size(), TankFish());
+    std::vector<CreatureJob> jobs;
+    jobs.reserve(creatures.size());
+    for (size_t i = 0; i < creatures.size(); ++i)
+    {
+        const TankCreature& c = creatures[i];
+        TankFish& f = fish_[i];
+        f.species  = c.species.empty() ? std::string(sea::kRandomSpecies) : c.species;
+        f.seed     = c.seed;
+        // Same bounds Resize() applies, so a save from a larger window still
+        // lands inside this one instead of swimming off-screen.
+        f.x        = std::clamp(c.x, 80.0, std::max(100.0, double(w_ - 80)));
+        f.baseY    = std::clamp(c.baseY, double(h_) * 0.15, double(h_) * 0.9);
+        f.y        = c.baseY;
+        f.speed    = c.speed;
+        f.dir      = c.dir >= 0 ? 1 : -1;
+        f.clip     = f.dir > 0 ? sea::ClipSwimRight : sea::ClipSwimLeft;
+        f.turning  = false;
+        f.clock    = 0.0;
+        f.frame    = 0;
+        f.bobPhase = c.bobPhase;
+        f.bobAmp   = c.bobAmp;
+        f.bobSpeed = c.bobSpeed;
+        f.scale    = 2;
+        f.alpha    = std::clamp(c.alpha, 0, 255);
+        f.ready    = false;
+        jobs.push_back(CreatureJob{ f.species, f.seed });
+    }
+
+    pending_.clear();
+    pending_.resize(fish_.size());
+    stop_.store(false);
+    workers_.emplace_back(&Tank::WorkerRange, this, 0, std::move(jobs));
+    return true;
+}
+
 bool Tank::AddFish()
 {
     if (fish_.empty() || int(fish_.size()) >= kMaxTankFish)
@@ -156,6 +238,7 @@ bool Tank::AddFish()
 
     TankFish added;
     added.species = "Random";
+    added.seed    = salt;
     InitFish(added, rng);
 
     // Unready fish are skipped by Update and Draw, so the newcomer is invisible
@@ -166,32 +249,21 @@ bool Tank::AddFish()
         pending_.resize(fish_.size());
     }
 
-    workers_.emplace_back(&Tank::WorkerRange, this, index, 1, true, salt,
-                          static_cast<const std::vector<const char*>*>(nullptr));
+    workers_.emplace_back(&Tank::WorkerRange, this, index,
+                          std::vector<CreatureJob>{ CreatureJob{ "Random", salt } });
     return true;
 }
 
-void Tank::WorkerRange(int first, int count, bool randomSpecies, sea::u64 randomSeed,
-                       const std::vector<const char*>* presets)
+void Tank::WorkerRange(int first, std::vector<CreatureJob> jobs)
 {
-    for (int n = 0; n < count && !stop_.load(); ++n)
+    for (int n = 0; n < int(jobs.size()) && !stop_.load(); ++n)
     {
         const int index = first + n;
 
-        // Random fish take the seed AddFish() drew from its entropy source,
-        // so two clicks can never agree; preset fish stay keyed to the tank
-        // seed, where the index spread keeps same-species twins apart.
-        const sea::u64 fishSeed = randomSpecies
-            ? randomSeed
-            : seed_ + sea::u64(index) * 37 + 1;
-
-        sea::SeaGenome genome;
-        if (presets != nullptr && index < int(presets->size()))
-            genome = sea::MakeGenome((*presets)[size_t(index)], fishSeed);
-        else
-        {
-            genome = sea::RandomGenome(sea::SeaKind((unsigned(fishSeed) >> 3) % 7u), fishSeed);
-        }
+        // The job carries the species and the seed the fish was spawned with,
+        // so a restored tank reproduces the same sheet without re-deriving
+        // either from the tank seed.
+        const sea::SeaGenome genome = GenomeFor(jobs[size_t(n)].species, jobs[size_t(n)].seed);
 
         sea::SeaSpriteOptions options;
         options.size       = kCell;

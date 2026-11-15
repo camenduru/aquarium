@@ -13,6 +13,7 @@
 // ================================================================
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace water {
@@ -210,8 +211,16 @@ bool ApplySetting(const std::string& key, const std::string& value,
 bool LoadIni(const std::string& path, WaterTuning& tuning, AquascapeSpec& spec,
              IniReport& report);
 
-/// Write a fully commented template holding the current values.
+/// Same parser over text already in memory. `path` only names the source in
+/// messages, so a caller that splits a file (a tank save, whose creature list
+/// is not a water setting) can feed the rest without a temp file.
+bool LoadIniText(const std::string& path, std::string_view text,
+                 WaterTuning& tuning, AquascapeSpec& spec, IniReport& report);
+
+/// Write a fully commented template holding the current values. `header`
+/// replaces the default comment block; each entry becomes one `; ` line.
 bool WriteIni(const std::string& path, const WaterTuning& tuning,
-              const AquascapeSpec& spec, std::string& error);
+              const AquascapeSpec& spec, std::string& error,
+              const std::vector<std::string>& header = {});
 
 } // namespace water

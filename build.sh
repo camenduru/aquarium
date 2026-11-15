@@ -62,7 +62,9 @@ echo "--- compiling aquarium"
 cl /nologo /std:c++20 /EHsc $OPT $DEFS \
     /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /utf-8 /Isrc \
     "/Fo:$OBJ/" "/Fe:bin/aquarium.exe" \
-    src/main.cpp src/tank.cpp src/transparent_window.cpp \
+    src/main.cpp src/tank.cpp src/tankfile.cpp src/transparent_window.cpp \
+    src/water/Aquascape.cpp src/water/WaterLayer.cpp src/water/WaterMasks.cpp \
+    src/water/WaterTuning.cpp \
     src/creature/CreatureSheetExport.cpp \
     $SEA \
     /link /SUBSYSTEM:WINDOWS \

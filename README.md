@@ -249,6 +249,58 @@ column. The airstone ripple rings cycle through the configured outlets.
 `bubble_count` and `bubble_column_N` are aquarium-only keys; everything else in
 the file keeps the demo's own IDs.
 
+### Saving and loading a tank
+
+One text file brings the whole aquarium back. **Ctrl+Shift+S** (or right-click
+-> **Save tank**) writes `tank.ini` next to `aquarium.exe`; **Ctrl+Shift+L** (or
+**Load tank**) puts it back: sand, rock, corals, every water setting, the night
+mood, the bubble outlets, and each fish with its species, genome seed and place
+in the tank.
+
+```
+; aquarium tank save - water settings, aquascape and every fish
+[water]
+clarity = 0.65
+...
+[aquascape]
+seed = 7
+coral_count = 9
+
+[creatures]
+count = 6
+fish_1 = Giant squid|100|483.89903635519175|225.24207069717119|34.433290651259547|1|3.8441412565612127|2.6779769898602939|0.59682459754103612|253
+```
+
+The settings half is exactly a `water.ini`, so a save also works as a preset
+(`--water-preset tank.ini`); `[creatures]` is the only addition, one line per
+fish: `species|seed|x|base_y|speed|dir|bob_phase|bob_amp|bob_speed|alpha`. A
+saved fish is identified by **species + genome seed**, and the sheet is
+regenerated from that pair on a worker, so the same animal comes back - not a
+similar one - and it arrives one at a time like every other fish. Numbers are
+written with 17 significant digits, which is enough to read every `double` back
+bit-for-bit: load -> save reproduces the file byte for byte. A fish saved
+mid-swim reappears exactly where it was; only its swim cycle restarts, because
+the regenerated sheet begins at its first frame.
+
+Loading a save replaces the water settings as well (a `--water-set` flag still
+wins, like on a hot reload), rebuilds the plate from the saved aquascape seed,
+and clears the old ripples. A missing or malformed file is reported line by
+line on the console and the running tank is left alone; the **Load tank** menu
+entry greys out until a `tank.ini` exists. **New tank** starts a fresh school,
+so a load never lingers as the default.
+
+`--load-tank <path>` and `--save-tank <path>` do the same headlessly, like
+`--dump-frame`. A save-only run stores the tank **as the run starts**, which is
+what makes the round trip checkable:
+
+```
+aquarium.exe --seed 99 --fish 6 --save-tank out/tank.ini
+aquarium.exe --load-tank out/tank.ini --dump-frame out/after.png
+```
+
+That dump is byte-identical to the same run started from the seed, in water-off
+and in ghost mode.
+
 ## How many creatures can be generated
 
 The generator itself has a finite roster, but the individuals it can invent are
@@ -327,7 +379,7 @@ or, without CMake (MSVC only):
 bin/aquarium.exe
 ```
 
-The release build is one self-contained **842 KB** executable (`862,208 bytes`)
+The release build is one self-contained **880 KB** executable (`901,120 bytes`)
 with no third-party DLLs, no runtime install and no assets folder - the 1.3
 sextillion creatures, the sand, the rocks and the reef are all generated inside
 it.
@@ -347,6 +399,10 @@ aquarium.exe --water-preset my.ini --water-set caustic_strength=0.4
 aquarium.exe --water-restore-defaults             # rewrite water.ini from defaults
 aquarium.exe --night 1 --clock 12 # pin the light instead of following the hour
 aquarium.exe --dump-frame f.png --dump-layers out/layer   # also dump content/masks/raw
+
+aquarium.exe --save-tank out/tank.ini             # headless: save the tank as it starts
+aquarium.exe --load-tank out/tank.ini             # open the saved sand, corals and fish
+aquarium.exe --load-tank out/tank.ini --dump-frame f.png  # check a save without a window
 ```
 
 Hotkeys (global, work while another app has focus):
@@ -358,6 +414,8 @@ Hotkeys (global, work while another app has focus):
 | `Ctrl+Shift+R` | reload `water.ini` |
 | `Ctrl+Shift+W` | water on / off |
 | `Ctrl+Shift+T` | night on / off |
+| `Ctrl+Shift+S` | save the tank to `tank.ini` |
+| `Ctrl+Shift+L` | load `tank.ini` |
 
 Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
 animal is generated on a worker thread and appears in place, while the rest of
@@ -366,8 +424,8 @@ greys out. Every added fish is a fresh random individual.
 
 **Add a random coral** grows the reef the same way: one new seeded coral,
 plant or polyp appears on the sand and the ones already there keep their place.
-It stops at 24 (`kMaxCorals`), and like the fish it is session-only - use
-`coral_count` in `water.ini` to keep a reef.
+It stops at 24 (`kMaxCorals`). Like an added fish it lives in the session - use
+`coral_count` in `water.ini`, or **Ctrl+Shift+S**, to keep the reef.
 
 **Full screen on this monitor** resizes the layered window to the monitor's full
 bounds. Because the aquarium is chrome-less and click-through per pixel, the

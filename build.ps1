@@ -43,6 +43,7 @@ $Args2 = @(
     "/Fo:bin/obj/","/Fe:bin/aquarium.exe",
     (Resolve-Path src/main.cpp).Path,
     (Resolve-Path src/tank.cpp).Path,
+    (Resolve-Path src/tankfile.cpp).Path,
     (Resolve-Path src/transparent_window.cpp).Path,
     (Resolve-Path src/water/Aquascape.cpp).Path,
     (Resolve-Path src/water/WaterLayer.cpp).Path,

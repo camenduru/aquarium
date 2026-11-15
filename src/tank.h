@@ -36,6 +36,7 @@ struct TankFish
     sea::SeaSheet sheet;
     bool     ready  = false;
     std::string species;
+    sea::u64 seed   = 0;     // the seed this fish's genome was built from
 
     double x = 0.0;          // centre, in window pixels
     double baseY = 0.0;      // bobbing centre
@@ -54,6 +55,22 @@ struct TankFish
 
     int    scale = 2;        // nearest-neighbour upscale
     int    alpha = 235;      // depth
+};
+
+/// One fish as a save file sees it: species and genome seed rebuild the sheet
+/// exactly, and the agent fields put it back where it was swimming.
+struct TankCreature
+{
+    std::string species;
+    sea::u64 seed  = 0;
+    double x       = 0.0;
+    double baseY   = 0.0;
+    double speed   = 40.0;
+    int    dir     = 1;
+    double bobPhase = 0.0;
+    double bobAmp   = 3.0;
+    double bobSpeed = 1.0;
+    int    alpha    = 235;
 };
 
 class Tank
@@ -75,6 +92,15 @@ public:
     void Update(double dt);
     void Draw(uint8_t* premultipliedBgra, int width, int height);
 
+    /// Every fish as data a save file can hold: species, genome seed and the
+    /// agent state. A snapshot taken now restores to the same aquarium.
+    std::vector<TankCreature> Snapshot() const;
+
+    /// Rebuild the tank from a snapshot: sheets are regenerated from the saved
+    /// species/seed on a worker, positions are set immediately. False when the
+    /// list is empty or larger than the tank.
+    bool Restore(int width, int height, const std::vector<TankCreature>& creatures);
+
     /// Draw into a straight-alpha logical canvas (half the window size) for
     /// the water composite. `hit` receives one byte per logical pixel and is
     /// set only on fish, so the window's hit test can ignore the water.
@@ -90,9 +116,14 @@ public:
     bool WaitAllReady(int timeoutMs);
 
 private:
+    struct CreatureJob
+    {
+        std::string species;
+        sea::u64 seed = 0;
+    };
+
     void InitFish(TankFish& f, std::mt19937& rng);
-    void WorkerRange(int first, int count, bool randomSpecies, sea::u64 randomSeed,
-                     const std::vector<const char*>* presets);
+    void WorkerRange(int first, std::vector<CreatureJob> jobs);
     void AdoptPending();
     void EmitRipple(const TankFish& f);
 

@@ -23,6 +23,7 @@ file(GLOB SEA_SOURCES CONFIGURE_DEPENDS
 add_executable(aquarium WIN32
     src/main.cpp
     src/tank.cpp
+    src/tankfile.cpp
     src/transparent_window.cpp
     src/water/Aquascape.cpp
     src/water/WaterLayer.cpp

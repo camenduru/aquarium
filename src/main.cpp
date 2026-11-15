@@ -9,20 +9,23 @@
 //   aquarium.exe [--fish N] [--corals N] [--seed N] [--width W] [--height H]
 //                [--seconds S] [--water off|ghost] [--water-preset path]
 //                [--water-set k=v] [--water-restore-defaults] [--night 0|1]
-//                [--clock S]
+//                [--clock S] [--load-tank path] [--save-tank path]
 //   Ctrl+Shift+Q quits, Ctrl+Shift+N builds a new tank, Ctrl+Shift+R reloads
-//   water.ini, Ctrl+Shift+W toggles the water, Ctrl+Shift+T toggles night.
+//   water.ini, Ctrl+Shift+W toggles the water, Ctrl+Shift+T toggles night,
+//   Ctrl+Shift+S saves the tank and Ctrl+Shift+L loads it.
 //   Right-click a fish for the same menu, including "Add a random coral".
 //   water.ini lives next to the executable; a missing one is written from the
-//   current defaults, so tuning needs no settings window.
+//   current defaults, so tuning needs no settings window. tank.ini (also next
+//   to the executable) is the save: sand, water settings, corals and fish.
 //
 // Headless mode (for checks and screenshots - no window at all):
 //   aquarium.exe --dump-frame out/frame.png [--seconds S] [--fish N]
-//                [--dump-layers out/layer]
+//                [--dump-layers out/layer] [--save-tank out/tank.ini]
 // ================================================================
 
 #include "transparent_window.h"
 #include "tank.h"
+#include "tankfile.h"
 
 #include "creature/CreatureSheetExport.h"
 #include "water/Aquascape.h"
@@ -53,6 +56,11 @@ constexpr const wchar_t* kWindowTitle = L"Aquarium";
 
 Tank              g_tank;
 TransparentWindow g_window;
+
+/// Fish handed to the next StartTank(): a loaded save spawns exactly these,
+/// an empty list means a fresh school from the tank seed. Consumed by
+/// StartTank(), so "New tank" after a load really starts over.
+std::vector<TankCreature> g_spawnCreatures;
 
 // ---- water ------------------------------------------------------
 enum class WaterMode { Off, Ghost };
@@ -129,19 +137,22 @@ std::wstring Widen(const std::string& utf8)
     return s;
 }
 
-std::string ConfigPath()
+std::string ExeDir()
 {
-    // water.ini sits next to the executable. A self-contained program should
-    // not scatter files into the user profile, and the file that tunes the
-    // aquarium is easiest to find beside the aquarium.
+    // Files that belong to the program sit next to it. A self-contained
+    // program should not scatter files into the user profile, and the file
+    // that tunes the aquarium is easiest to find beside the aquarium.
     wchar_t buffer[MAX_PATH] = {};
     const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
     std::string path = (n > 0 && n < MAX_PATH) ? Narrow(buffer) : std::string();
 
     const size_t slash = path.find_last_of("\\/");
     path.resize(slash == std::string::npos ? 0 : slash + 1);
-    return path + "water.ini";
+    return path;
 }
+
+std::string ConfigPath() { return ExeDir() + "water.ini"; }
+std::string TankPath()   { return ExeDir() + tankfile::kDefaultName; }
 
 bool FileExists(const std::string& path)
 {
@@ -354,6 +365,79 @@ void AddCoral()
     std::printf("aquarium: %d coral(s)\n", g_spec.coralCount);
 }
 
+/// Write the whole tank - water settings, aquascape and every fish - to one
+/// INI file. The save is the state right now, so it can be taken mid-swim.
+bool SaveTankTo(const std::string& path)
+{
+    tankfile::TankSave save;
+    save.tuning    = g_tuning;
+    save.spec      = g_spec;
+    save.creatures = g_tank.Snapshot();
+
+    std::string error;
+    if (!tankfile::Save(path, save, error))
+    {
+        std::printf("aquarium: save %s failed: %s\n", path.c_str(), error.c_str());
+        return false;
+    }
+
+    std::printf("aquarium: saved %d fish, %d coral(s) -> %s\n",
+                int(save.creatures.size()), g_spec.coralCount, path.c_str());
+    return true;
+}
+
+/// Apply a save. Everything it holds is a complete state, not a patch: the
+/// settings replace water.ini's values (command-line overrides still win,
+/// exactly as on a hot reload), the aquascape is rebuilt from the saved seed
+/// and the fish are queued for the next StartTank().
+bool LoadTankFrom(const std::string& path)
+{
+    tankfile::TankSave save;
+    std::string error;
+    if (!tankfile::Load(path, save, error))
+    {
+        std::printf("aquarium: load %s failed: %s\n", path.c_str(), error.c_str());
+        return false;
+    }
+
+    g_tuning         = save.tuning;
+    g_spawnCreatures = save.creatures;
+    g_fish           = int(save.creatures.size());
+
+    // A saved tank that is loaded with --water-set still honours the flag;
+    // the save only replaces the file it was written from.
+    ApplyOverrides();
+    if (g_corals >= 0)
+        g_spec.coralCount = std::clamp(g_corals, 0, water::kMaxCorals);
+
+    water::BuildPalette(g_tuning, g_palette);
+    RebuildAquascape();
+
+    // The rings belonged to the tank that was just replaced.
+    g_ripples.Reset();
+    g_airstoneTimer  = 0.4;
+    g_airstoneOutlet = 0;
+
+    std::printf("aquarium: loaded %s: %d fish, %d coral(s), seed %llu\n",
+                path.c_str(), g_fish, g_spec.coralCount,
+                (unsigned long long)g_spec.seed);
+    return true;
+}
+
+/// Start the school at this size: the loaded fish if a save is pending,
+/// otherwise a fresh tank from the current seed.
+void StartTank(int width, int height)
+{
+    std::vector<TankCreature> crew;
+    crew.swap(g_spawnCreatures);
+    if (!crew.empty() && g_tank.Restore(width, height, crew))
+    {
+        g_fish = int(crew.size());
+        return;
+    }
+    g_tank.Start(width, height, g_seed, g_fish);
+}
+
 /// Local time to a 0..1 night value: dark from 21:00 to 06:00, ramping over
 /// two hours at each end, so the tank follows the desktop's own lighting.
 float NightNow()
@@ -466,9 +550,9 @@ void RestartTank(int width, int height)
     // Rebuild at the size the tank is now, so fish added from the menu are
     // not silently dropped by a new tank.
     g_fish = std::max(1, g_tank.FishCount());
-    g_tank.Stop();
+    g_spawnCreatures.clear();   // a new tank is a new school, not the saved one
     g_seed += 101;
-    g_tank.Start(width, height, g_seed, g_fish);
+    StartTank(width, height);
 }
 
 /// Manual night override, shared by the menu and the hotkey so the two can
@@ -562,15 +646,32 @@ void DumpLayers(const std::string& prefix, const std::vector<uint8_t>& canvas,
     }
 }
 
+/// Headless run: build the tank, let it swim `seconds`, then write what was
+/// asked for. `path` may be empty - then the run only takes a save, which is
+/// how a load is checked against a fresh start of the same seed.
 int DumpFrame(const std::string& path, int width, int height, int seconds,
-              const std::string& layers)
+              const std::string& layers, const std::string& savePath)
 {
     g_ripples.Reset();
-    g_tank.Start(width, height, g_seed, g_fish);
+    StartTank(width, height);
     const bool ready = g_tank.WaitAllReady(300000);
     if (!ready)
         std::printf("aquarium: only %d of %d sheets generated\n",
                     g_tank.ReadyCount(), g_tank.FishCount());
+
+    // Saved before the first step, so the file is the state a load puts back:
+    // same fish, same places, and the same frames after the same number of
+    // fixed 1/30 s steps.
+    if (!savePath.empty() && !SaveTankTo(savePath))
+    {
+        g_tank.Stop();
+        return 4;
+    }
+    if (path.empty())
+    {
+        g_tank.Stop();
+        return 0;
+    }
 
     const int steps = std::max(1, seconds) * 30;
     const double dt = 1.0 / 30.0;
@@ -685,6 +786,10 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     AppendMenuW(menu, MF_STRING, 7, L"Reload water.ini  (Ctrl+Shift+R)");
     AppendMenuW(menu, MF_STRING, 9, L"Write water.ini template");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, 11, L"Save tank  (Ctrl+Shift+S)");
+    AppendMenuW(menu, MF_STRING | (FileExists(TankPath()) ? 0u : MF_GRAYED), 12,
+                L"Load tank  (Ctrl+Shift+L)");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_fullscreen ? MF_CHECKED : 0u), 4,
                 L"Full screen on this monitor");
     AppendMenuW(menu, MF_STRING | (multiMonitor ? 0u : MF_GRAYED), 5, L"Swap monitor");
@@ -716,6 +821,13 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
         WriteWaterTemplate();
     else if (cmd == 10)
         AddCoral();
+    else if (cmd == 11)
+        SaveTankTo(TankPath());
+    else if (cmd == 12)
+    {
+        if (LoadTankFrom(TankPath()))
+            StartTank(g_window.Width(), g_window.Height());
+    }
 }
 
 } // namespace
@@ -727,6 +839,8 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     std::string dumpPath;
     std::string layerPrefix;
     std::string presetPath;
+    std::string loadPath;
+    std::string savePath;
     bool dump = false;
     bool explicitNight = false;
     bool restoreDefaults = false;
@@ -754,6 +868,8 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
             else std::printf("aquarium: --water: expected off|ghost, got '%s'\n", v.c_str());
         }
         else if (a == "--water-preset") { take(presetPath); }
+        else if (a == "--load-tank")  { take(loadPath); }
+        else if (a == "--save-tank")  { take(savePath); }
         else if (a == "--water-set")
         {
             take(v);
@@ -784,7 +900,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     g_waterMode = waterOff ? WaterMode::Off : WaterMode::Ghost;
     g_iniPath   = presetPath.empty() ? ConfigPath() : presetPath;
 
-    if (dump || g_seconds > 0)
+    if (dump || g_seconds > 0 || !savePath.empty())
         AttachParentConsole();
 
     SetProcessDPIAware();
@@ -804,6 +920,13 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     }
     ReloadWater(false);
 
+    // A saved tank wins over water.ini: it is a complete state, not a patch.
+    // Applied here, before the window exists, so a windowed start and a
+    // headless dump both begin from the same tank.
+    bool loadOk = true;
+    if (!loadPath.empty())
+        loadOk = LoadTankFrom(loadPath);
+
     // A dump is a check: same seed, same clock, same picture. The wall clock
     // must therefore not leak into it unless --night says so.
     if ((dump || g_seconds > 0) && !explicitNight)
@@ -812,8 +935,18 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         g_night     = 0.0f;
     }
 
-    if (dump)
-        return DumpFrame(dumpPath, width, height, std::max(g_seconds, 6), layerPrefix);
+    if (dump || !savePath.empty())
+    {
+        if (!loadOk)
+        {
+            std::printf("aquarium: not dumping, %s did not load\n", loadPath.c_str());
+            return 5;
+        }
+        return DumpFrame(dumpPath, width, height, std::max(g_seconds, 6), layerPrefix,
+                         savePath);
+    }
+    if (!loadOk)
+        std::printf("aquarium: starting a fresh tank instead\n");
 
     // Bottom-right of the work area, small margin - the same placement rule
     // VRMPet uses for its overlay.
@@ -858,6 +991,13 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
             SetWater(g_waterMode == WaterMode::Ghost ? WaterMode::Off : WaterMode::Ghost);
         else if (id == 5)
             ToggleNight();
+        else if (id == 6)
+            SaveTankTo(TankPath());
+        else if (id == 7)
+        {
+            if (LoadTankFrom(TankPath()))
+                StartTank(g_window.Width(), g_window.Height());
+        }
     };
     g_window.onRightClick = [](int sx, int sy)
     {
@@ -878,11 +1018,13 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     RegisterHotKey(g_window.Hwnd(), 3, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'R');
     RegisterHotKey(g_window.Hwnd(), 4, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'W');
     RegisterHotKey(g_window.Hwnd(), 5, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'T');
+    RegisterHotKey(g_window.Hwnd(), 6, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'S');
+    RegisterHotKey(g_window.Hwnd(), 7, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'L');
 
     PrepareWater(width, height);
 
     g_window.Show();
-    g_tank.Start(width, height, g_seed, g_fish);
+    StartTank(width, height);
     g_start = std::chrono::steady_clock::now();
     auto last = g_start;
 
@@ -937,7 +1079,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
             running = false;
     }
 
-    for (int id = 1; id <= 5; ++id)
+    for (int id = 1; id <= 7; ++id)
         UnregisterHotKey(g_window.Hwnd(), id);
     const int ready = g_tank.ReadyCount();
     const int total = g_tank.FishCount();

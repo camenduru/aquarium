@@ -335,6 +335,16 @@ coral_count = 9
   leaving stale state.
 - No JSON reader in v1. Inert-but-declared IDs stay in the table so a future
   JSON/preset bridge is a loader, not a schema change.
+- **A whole tank is one file, not a new format.** A save is the settings file
+  plus one `[creatures]` section appended (`src/tankfile.cpp`), so the settings
+  half is still a valid `water.ini` and a save doubles as a preset. The loader
+  splits the text at the `[creatures]` heading and hands the head to the same
+  INI parser, so one grammar covers tuning and state. A fish is stored as
+  `species|seed|x|base_y|speed|dir|bob_phase|bob_amp|bob_speed|alpha`: species
+  and seed rebuild the sheet through the generator's own preset/random paths,
+  the rest puts the agent back where it was. Saves are all-or-nothing (one bad
+  line fails the load), unlike a tuning file, where a bad line is skipped - a
+  half-loaded tank would be a different tank.
 
 ### 7.3 Precompute the colours
 
@@ -440,6 +450,7 @@ water.
 | Water intensity | `ghost` only; `off` remains the escape hatch |
 | Seabed | procedural sand + rock, generated from one `TankSpec`, zero assets |
 | Tuning | `water.ini` + Ctrl+Shift+R hot reload + CLI overrides + named presets; no UI window, no JSON reader |
+| Whole-tank persistence | one `tank.ini` beside the executable: the same settings grammar plus a `[creatures]` list; Ctrl+Shift+S / Ctrl+Shift+L; no save slots |
 
 Consequences that are now scope, not options: the plate is a deliverable (M2) and
 carries its own palette and review step; `[aquascape]` keys rebuild plate and masks
@@ -476,12 +487,14 @@ src/water/WaterMasks.h/.cpp    rounded-rect interior, chamfer distance, depth
 src/water/Aquascape.h/.cpp     procedural sand + rock + coral plate (zero assets)
 src/water/RipplePool.h         16 slots, phase compensation
 src/water/WaterLayer.h/.cpp    static light cache, composite, upscale
+src/tankfile.h/.cpp            whole-tank save/load: settings + [creatures]
 ```
 
 `src/composite.h` gained `BlendSpriteLogical` (straight-alpha source-over plus
 hit-mask marking); `src/transparent_window.*` gained the hit mask and
-`WM_LBUTTONUP` dispatch; `src/tank.*` gained `DrawLogical` and ripple emission;
-`src/main.cpp` owns the flags, the INI poll and the hotkeys.
+`WM_LBUTTONUP` dispatch; `src/tank.*` gained `DrawLogical`, ripple emission,
+`Snapshot`/`Restore` and a per-fish genome seed; `src/main.cpp` owns the flags,
+the INI poll and the hotkeys.
 
 ### 13.2 Deviations from the plan
 
@@ -498,6 +511,7 @@ hit-mask marking); `src/transparent_window.*` gained the hit mask and
 | no coral in the plan | five seeded species (`Branch/Fan/Brain/Kelp/Polyp`) plus `coral_count` and **Add a random coral** | the plate read as empty sand; corals are the cheapest way to make it a tank, and they reuse the rock rules (mask-clipped, shared outline, palette-only) |
 | 8–16 airstone bubbles | **20** beads per column, each with its own size/alpha wobble, 0–64 per column and up to six `bubble_column_N` outlets (128 beads total) | one density read as a white smudge at 600×340, but the wobble makes 20 read as separate beads, and the count and outlet positions belong to the INI: add or delete a line to add or remove a column, which always starts on the sand under its x |
 | named presets in a `water\` folder | one `water.ini` beside the executable, `--water-preset <path>` for alternates | no preset browser means nothing to auto-save; the menu can rewrite the file from defaults |
+| no persistence in the plan | **tank.ini**: the settings file plus `[creatures]`, saved with **Ctrl+Shift+S** / `--save-tank` and restored with **Ctrl+Shift+L** / `--load-tank` | the reef is worth coming back to, and the format that already existed covered it: same `key = value` grammar, one extra section, no JSON and no binary blob. Fish identity is (species, genome seed), so nothing is re-invented on load |
 
 Other decisions worth knowing: ripple radius edits compensate existing rings
 (the demo's phase-offset trick); bubble and ripple contributions are capped
@@ -515,6 +529,7 @@ before compositing so a crossing never lights the desktop to full opacity;
 | ghost alpha, mean over open water | 9.8 % |
 | highlights above 40 % of open water | 0.01 % |
 | `--water off` at seed 99, clock frozen | `51E5EF7C…` — byte-identical to the pre-water build |
+| save -> load round trip (BMP/PNG dump, seed 99, 6 fish) | byte-identical dump in water-off **and** ghost mode; load -> save reproduces the INI byte for byte |
 
 `python tools/check_water.py` covers determinism, the 2× block grid, the
 premultiplied invariant, containment, and the ghost budget. `tools/probe_window.ps1`
