@@ -53,6 +53,10 @@ struct TankFish
     double bobAmp = 3.0;
     double bobSpeed = 1.0;
 
+    // Startled: a click on this fish sets the alarm and it darts away from the
+    // pointer until it runs out. Not saved - a poke is an event, not the tank.
+    double alarm = 0.0;
+
     int    scale = 2;        // nearest-neighbour upscale
     int    alpha = 235;      // depth
 };
@@ -87,6 +91,16 @@ public:
     /// until it is ready, so it simply appears. False when the tank is full
     /// or not running.
     bool AddFish();
+
+    /// Startle the fish drawn under a window pixel. It turns its back on the
+    /// pointer and darts off, so clicking a fish scares it rather than being
+    /// ignored. Returns the fish's index (the save's `fish_N`), or -1 when that
+    /// pixel holds no fish - the click was on open water or empty sprite.
+    int PokeAt(double x, double y);
+
+    /// How fast a startled fish flees, as a multiple of its cruise speed
+    /// (water.ini's `escape_speed`). Clamped to 1..6.
+    void SetEscapeSpeed(double multiplier);
 
     void Resize(int width, int height);
     void Update(double dt);
@@ -147,4 +161,7 @@ private:
 
     /// Seconds until the next turn may emit a ripple.
     double rippleCooldown_ = 0.0;
+
+    /// water.ini's escape_speed: a startled fish's speed, relative to cruise.
+    double escapeSpeed_ = 2.8;
 };

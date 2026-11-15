@@ -147,6 +147,11 @@ struct WaterTuning
     float moonSpeed     = 0.65f;
     float offsetMoon    = 0.0f;
 
+    // ---- fish (aquarium-only) ----------------------------------
+    /// How fast a clicked fish flees, as a multiple of its cruise speed.
+    /// The alarm lasts 1.6 s and eases from this value back to 1.
+    float escapeSpeed = 2.8f;
+
     // ---- effect toggles ----------------------------------------
     bool depthEnabled      = true;
     bool refractionEnabled = true;

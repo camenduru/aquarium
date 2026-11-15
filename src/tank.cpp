@@ -32,6 +32,14 @@ constexpr int kSpeciesCount = int(sizeof(kSpecies) / sizeof(kSpecies[0]));
 constexpr int kCell       = 64;   // sprite cell
 constexpr int kSmoothness = 2;    // 16 swim frames / 20 turn frames
 
+// A startled fish flees for this long, easing from its escape speed back to
+// cruise; the speed itself is water.ini's `escape_speed` (default 2.8x).
+constexpr double kAlarmSeconds = 1.6;
+
+// Room (window px) a fleeing fish wants on its chosen side; with less, it
+// picks the other side rather than turning around a moment later.
+constexpr double kEscapeRoom = 40.0;
+
 /// The genome a (species, seed) pair names. A named preset pins its genes; a
 /// "Random" fish picks its kind from the seed, exactly as the spawn path has
 /// always done, so storing the pair is enough to rebuild the same animal.
@@ -333,6 +341,8 @@ void Tank::Update(double dt)
         f.frame = c.loops ? (raw % std::max(c.frames, 1))
                           : std::min(raw, std::max(c.frames - 1, 0));
 
+        f.alarm = std::max(0.0, f.alarm - dt);
+
         if (f.turning)
         {
             const double span = double(c.frames) / c.fps;
@@ -347,7 +357,11 @@ void Tank::Update(double dt)
         }
         else
         {
-            f.x += f.dir * f.speed * dt;
+            // A startled fish leaves in a hurry: the click's alarm multiplies
+            // the cruise speed, and eases back to it as the alarm runs out.
+            const double rush =
+                1.0 + (escapeSpeed_ - 1.0) * (f.alarm / kAlarmSeconds);
+            f.x += f.dir * f.speed * rush * dt;
             const double margin = 78.0;
             if (f.dir > 0 && f.x > double(w_) - margin)
             {
@@ -398,6 +412,59 @@ void Tank::Draw(uint8_t* canvas, int width, int height)
                     sx, sy, cell, cell,
                     dstX, dstY, f.scale, f.alpha);
     }
+}
+
+void Tank::SetEscapeSpeed(double multiplier)
+{
+    escapeSpeed_ = std::clamp(multiplier, 1.0, 6.0);
+}
+
+int Tank::PokeAt(double x, double y)
+{
+    // Topmost first: the last drawn fish is the one under the pointer.
+    for (int i = int(fish_.size()) - 1; i >= 0; --i)
+    {
+        TankFish& f = fish_[size_t(i)];
+        if (!f.ready || f.sheet.rgba.empty() || f.sheet.size < 1) continue;
+
+        const ClipView c    = LookupClip(f.sheet, f.clip);
+        const int      cell = f.sheet.size;
+        const int      cols = f.sheet.width / cell;
+        if (cols < 1) continue;
+
+        const int size = cell * f.scale;
+        const int dstX = int(std::lround(f.x)) - size / 2;
+        const int dstY = int(std::lround(f.y)) - size / 2;
+
+        const int px = int(std::floor(x)) - dstX;
+        const int py = int(std::floor(y)) - dstY;
+        if (px < 0 || py < 0 || px >= size || py >= size) continue;
+
+        // The same nearest-neighbour mapping the blit uses, so the alpha test
+        // answers for exactly the pixels that were drawn.
+        const int col = std::clamp(f.frame, 0, cols - 1);
+        const int sx  = col * cell + px / f.scale;
+        const int sy  = c.row * cell + py / f.scale;
+        if (sx >= f.sheet.width || sy >= f.sheet.height) continue;
+
+        const size_t o = (size_t(sy) * size_t(f.sheet.width) + size_t(sx)) * 4;
+        if (f.sheet.rgba[o + 3] < 24) continue;   // empty corner of the cell
+
+        // Away from the pointer; if that side is a wall away, leave the other
+        // way. A fish cornered by the hand still gets out.
+        int away = x < f.x ? 1 : -1;
+        const double room = away > 0 ? double(w_) - 78.0 - f.x : f.x - 78.0;
+        if (room < kEscapeRoom) away = -away;
+
+        f.dir     = away;
+        f.clip    = away > 0 ? sea::ClipSwimRight : sea::ClipSwimLeft;
+        f.turning = false;
+        f.clock   = 0.0;
+        f.frame   = 0;
+        f.alarm   = kAlarmSeconds;
+        return i;
+    }
+    return -1;
 }
 
 void Tank::EmitRipple(const TankFish& f)

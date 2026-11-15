@@ -330,6 +330,7 @@ void ReloadWater(bool announce)
         g_spec.coralCount = std::clamp(g_corals, 0, water::kMaxCorals);
 
     water::BuildPalette(g_tuning, g_palette);
+    g_tank.SetEscapeSpeed(g_tuning.escapeSpeed);
 
     // Absorb a ripple-speed edit so rings already on the water keep their
     // radius instead of jumping (the demo's phase-offset trick).
@@ -411,6 +412,7 @@ bool LoadTankFrom(const std::string& path)
         g_spec.coralCount = std::clamp(g_corals, 0, water::kMaxCorals);
 
     water::BuildPalette(g_tuning, g_palette);
+    g_tank.SetEscapeSpeed(g_tuning.escapeSpeed);
     RebuildAquascape();
 
     // The rings belonged to the tank that was just replaced.
@@ -1005,8 +1007,13 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     };
     g_window.onLeftClick = [](int cx, int cy)
     {
-        // Only delivered on solid pixels (a fish). The ripple spreads from
-        // the click, which is the demo's pointer event, kept.
+        // Only delivered on solid pixels (a fish). The fish under the pointer
+        // is startled and darts off; the ripple spreads from the click, which
+        // is the demo's pointer event, kept. With the water off the fish still
+        // darts - there is just no ring to leave behind.
+        const int poked = g_tank.PokeAt(double(cx), double(cy));
+        if (poked >= 0)
+            std::printf("aquarium: fish_%d startled\n", poked + 1);
         if (g_waterMode != WaterMode::Ghost) return;
         g_ripples.Add(float(cx) * 0.5f, float(cy) * 0.5f, g_clock, 0.8f);
     };

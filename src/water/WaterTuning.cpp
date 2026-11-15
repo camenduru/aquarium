@@ -134,6 +134,8 @@ const FloatDef kFloats[] = {
     { "night", "moon_amplitude", &WaterTuning::moonAmplitude, 0.0f, 20.0f },
     { "night", "moon_speed",     &WaterTuning::moonSpeed,    -4.0f, 4.0f },
     { "night", "offset_moon_speed", &WaterTuning::offsetMoon, -1000.0f, 1000.0f },
+    // [fish]
+    { "fish",  "escape_speed",   &WaterTuning::escapeSpeed,   1.0f, 6.0f },
 };
 
 const IntDef kInts[] = {
@@ -557,6 +559,7 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
         if (std::strcmp(name, "ripples") == 0)  return "rings from clicks, turns and the airstone";
         if (std::strcmp(name, "falls") == 0)    return "airstone bubble columns (the demo's waterfall terms)";
         if (std::strcmp(name, "night") == 0)    return "moon band";
+        if (std::strcmp(name, "fish") == 0)     return "how fast a clicked fish flees (multiple of cruise speed)";
         return nullptr;
     };
 
