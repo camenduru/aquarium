@@ -31,6 +31,10 @@ struct Grade
 
 /// The tank's procedural geometry. One spec feeds both the masks and the
 /// sand/rock plate, so the two can never disagree.
+/// Hard cap on procedural corals: each is a small drawing, but the reef is
+/// scenery, not wallpaper, and the ghost alpha budget is shared.
+constexpr int kMaxCorals = 24;
+
 struct AquascapeSpec
 {
     unsigned seed       = 7;
@@ -39,6 +43,7 @@ struct AquascapeSpec
     int      rockCount  = 4;
     float    rockScale  = 1.0f;
     bool     frontRock  = true;
+    int      coralCount = 9;       // procedural corals, plants and polyps
     int      margin     = 6;       // logical px inset of the tank interior
 };
 

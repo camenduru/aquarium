@@ -6,12 +6,13 @@
 // per-pixel-alpha layered window using the recipe learned from VRMPet.
 //
 // Window mode:
-//   aquarium.exe [--fish N] [--seed N] [--width W] [--height H] [--seconds S]
-//                [--water off|ghost] [--water-preset path] [--water-set k=v]
-//                [--water-restore-defaults] [--night 0|1] [--clock S]
+//   aquarium.exe [--fish N] [--corals N] [--seed N] [--width W] [--height H]
+//                [--seconds S] [--water off|ghost] [--water-preset path]
+//                [--water-set k=v] [--water-restore-defaults] [--night 0|1]
+//                [--clock S]
 //   Ctrl+Shift+Q quits, Ctrl+Shift+N builds a new tank, Ctrl+Shift+R reloads
 //   water.ini, Ctrl+Shift+W toggles the water, Ctrl+Shift+T toggles night.
-//   Right-click a fish for the same menu.
+//   Right-click a fish for the same menu, including "Add a random coral".
 //   water.ini lives next to the executable; a missing one is written from the
 //   current defaults, so tuning needs no settings window.
 //
@@ -95,6 +96,7 @@ sea::u64 FreshSeed()
 }
 
 int               g_fish    = 1;
+int               g_corals  = -1;           // --corals, -1 = take water.ini
 sea::u64          g_seed    = FreshSeed();
 int               g_seconds = 0;
 std::chrono::steady_clock::time_point g_start;
@@ -242,6 +244,7 @@ bool SameSpec(const water::AquascapeSpec& a, const water::AquascapeSpec& b)
         && a.rockCount == b.rockCount
         && a.rockScale == b.rockScale
         && a.frontRock == b.frontRock
+        && a.coralCount== b.coralCount
         && a.margin    == b.margin;
 }
 
@@ -308,6 +311,12 @@ void ReloadWater(bool announce)
     }
 
     ApplyOverrides();
+
+    // --corals is a run-wide override like --fish: a hot reload must not
+    // silently hand the count back to water.ini.
+    if (g_corals >= 0)
+        g_spec.coralCount = std::clamp(g_corals, 0, water::kMaxCorals);
+
     water::BuildPalette(g_tuning, g_palette);
 
     // Absorb a ripple-speed edit so rings already on the water keep their
@@ -331,6 +340,17 @@ void WriteWaterTemplate()
         std::printf("aquarium: wrote %s\n", g_iniPath.c_str());
     ReadStamp(g_iniPath, g_iniStamp);
     g_haveIni = true;
+}
+
+/// One extra coral, plant or polyp on the same sand: the reef grows the way
+/// the school does, by adding a seeded individual rather than re-rolling the
+/// scene.
+void AddCoral()
+{
+    if (g_spec.coralCount >= water::kMaxCorals) return;
+    ++g_spec.coralCount;
+    RebuildAquascape();
+    std::printf("aquarium: %d coral(s)\n", g_spec.coralCount);
 }
 
 /// Local time to a 0..1 night value: dark from 21:00 to 06:00, ramping over
@@ -635,10 +655,13 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
         g_monitor = 0;
 
     const bool canAdd       = g_tank.FishCount() < kMaxTankFish;
+    const bool canCoral     = g_spec.coralCount < water::kMaxCorals
+                           && g_waterMode == WaterMode::Ghost;
     const bool multiMonitor = g_monitors.size() > 1;
 
     AppendMenuW(menu, MF_STRING, 1, L"New tank  (Ctrl+Shift+N)");
     AppendMenuW(menu, MF_STRING | (canAdd ? 0u : MF_GRAYED), 2, L"Add a random fish");
+    AppendMenuW(menu, MF_STRING | (canCoral ? 0u : MF_GRAYED), 10, L"Add a random coral");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_waterMode == WaterMode::Ghost ? MF_CHECKED : 0u), 6,
                 L"Water  (Ctrl+Shift+W)");
@@ -676,6 +699,8 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
         ToggleNight();
     else if (cmd == 9)
         WriteWaterTemplate();
+    else if (cmd == 10)
+        AddCoral();
 }
 
 } // namespace
@@ -702,6 +727,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         else if (a == "--dump-layers"){ take(v); layerPrefix = v; }
         else if (a == "--seconds")    { take(v); g_seconds = std::atoi(v.c_str()); }
         else if (a == "--fish")       { take(v); g_fish = std::atoi(v.c_str()); }
+        else if (a == "--corals")     { take(v); g_corals = std::atoi(v.c_str()); }
         else if (a == "--seed")       { take(v); g_seed = (sea::u64)std::strtoull(v.c_str(), nullptr, 10); }
         else if (a == "--width")      { take(v); width = std::atoi(v.c_str()); }
         else if (a == "--height")     { take(v); height = std::atoi(v.c_str()); }
@@ -845,8 +871,8 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     g_start = std::chrono::steady_clock::now();
     auto last = g_start;
 
-    std::printf("aquarium: %dx%d at %d,%d, %d fish, seed %llu, water %s, ini %s\n",
-                width, height, posX, posY, g_fish, (unsigned long long)g_seed,
+    std::printf("aquarium: %dx%d at %d,%d, %d fish, %d coral(s), seed %llu, water %s, ini %s\n",
+                width, height, posX, posY, g_fish, g_spec.coralCount, (unsigned long long)g_seed,
                 g_waterMode == WaterMode::Ghost ? "ghost" : "off", g_iniPath.c_str());
 
     double pollTimer = 0.5;

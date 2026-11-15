@@ -2,11 +2,16 @@
 // ================================================================
 // AQUARIUM - procedural aquascape
 // ----------------------------------------------------------------
-// The sand and rock plate is generated, never loaded: this project has
-// no texture loader and ships no assets. The look is held together by
-// pixel-art rules rather than detail - a hard silhouette, a 6-8 entry
+// The sand, rock and coral plate is generated, never loaded: this project
+// has no texture loader and ships no assets. The look is held together by
+// pixel-art rules rather than detail - a hard silhouette, a small
 // palette, one outline tone, no anti-aliasing. Softness comes from the
 // water (refraction, caustics, tint) applied on top.
+//
+// Corals are seeded genomes (kind, size, bend, hue, detail seed) drawn into a
+// scratch tone mask and blitted with one shared outline. Placement walks the
+// width by the golden angle from the coral's index, so adding one never moves
+// the ones already there.
 //
 // Rocks are behind the fish. One optional "front rock" is drawn after
 // them, so it reads as nearer the viewer - the demo's occlusion idea,

@@ -183,9 +183,9 @@ side-view, so:
 Computed once at startup by rasterising a small vector spec (rounded rect + sand
 line + optional blobs) and running a distance transform — ~5 ms for 600×340, no
 asset files, no PNG decoder. This keeps the "one self-contained executable, no
-assets" property (811 KB with the water layer).
+assets" property (836 KB with the water layer and the reef).
 
-### 6.2a Procedural sand and rock (zero assets)
+### 6.2a Procedural sand, rock and corals (zero assets)
 
 The floor is generated from the **same spec**, in code, once at startup, and cached
 as a logical-resolution RGBA plate. No PNG, no embedded blob, no asset folder.
@@ -196,7 +196,7 @@ The look is built from a handful of pixel-art constraints rather than detail:
   logical grid, plus 3–6 rock silhouettes from seeded ellipses/polygons. A 1-pixel
   darker outline on the rocks, the demo's shared-outline trick.
 - **A fixed palette** — 6–8 entries (sand light/mid/shadow, rock light/mid/shadow,
-  one accent for a plant or coral). Every pixel is one of those entries, so no
+  plus the coral palette). Every pixel is one of those entries, so no
   gradient banding appears when the water tint is applied on top.
 - **No anti-aliasing** — edges are hard; the 2× upscale and the water's own
   refraction supply all the softness that is wanted.
@@ -218,10 +218,18 @@ Two depth cues fall out of the same spec with no extra art:
    caustics and refraction land on it directly; the sand grain is just palette
    dithering plus the existing caustic light.
 
+Corals were added after v1, as the same kind of generated art (see §13.2):
+a genome per index, five species (branch, fan, brain, kelp, polyp), a shared
+1 px outline and a five-tone palette per coral. They are drawn into a scratch
+tone mask first, then blitted through `Masks::Inside`, so a coral can never
+leave the tank or reach the fish hit mask. Placement walks the width by the
+golden angle from the coral's index, which makes "add one more" a pure append:
+no existing coral moves or changes shape.
+
 The plate is editable with a `[aquascape]` section in `water.ini`
-(`seed`, `sand_y`, `sand_curve`, `rock_count`, `rock_scale`, `front_rock`) and a
-reload (Ctrl+Shift+R, or the automatic half-second poll) rebuilds it, so the
-scene can be tuned without recompiling.
+(`seed`, `sand_y`, `sand_curve`, `rock_count`, `rock_scale`, `front_rock`,
+`coral_count`) and a reload (Ctrl+Shift+R, or the automatic half-second poll)
+rebuilds it, so the scene can be tuned without recompiling.
 
 ### 6.3 Fish
 
@@ -298,6 +306,7 @@ seed = 7
 sand_y = 0.86
 rock_count = 4
 front_rock = 1
+coral_count = 9
 ```
 
 - `--water-preset <path>` loads at startup; **Ctrl+Shift+R hot-reloads** (mtime
@@ -383,7 +392,7 @@ Reuse the demo's evidence discipline; every claim gets a number.
 8. **Click-through** — extend `tools/probe_window.ps1`: sample a water-only client pixel and a fish pixel, assert `HTTRANSPARENT` and `HTCLIENT` respectively.
 9. **Window invariants** — the existing layered/topmost/no-`WS_EX_TRANSPARENT` probe still passes.
 10. **Perf** — record ms/frame for 1, 12, 128 fish at 1,200×680 and at full screen.
-11. **Aquascape** — same seed → identical plate bytes; every plate pixel is a palette entry; `sand_y`/`rock_count` visibly move the scene; the front rock never covers a fish whose centre is in front of its footer.
+11. **Aquascape** — same seed → identical plate bytes; every plate pixel is a palette entry; `sand_y`/`rock_count`/`coral_count` visibly move the scene; the front rock never covers a fish whose centre is in front of its footer. Corals are plate-only: they change content, never the hit mask.
 12. **Ghost budget** — mean water alpha over the tank stays under the agreed cap (≈20 %), so a screenshot of a text document behind the aquarium is still legible.
 
 `tools/check_water.py` mirrors `tools/check_stone_basin_render.py` for 1–7 and 11–12.
@@ -453,7 +462,7 @@ translation unit), so the shipped sources are:
 ```
 src/water/WaterTuning.h/.cpp   parameter table, INI read/write, palette
 src/water/WaterMasks.h/.cpp    rounded-rect interior, chamfer distance, depth
-src/water/Aquascape.h/.cpp     procedural sand + rock plate (zero assets)
+src/water/Aquascape.h/.cpp     procedural sand + rock + coral plate (zero assets)
 src/water/RipplePool.h         16 slots, phase compensation
 src/water/WaterLayer.h/.cpp    static light cache, composite, upscale
 ```
@@ -475,6 +484,7 @@ hit-mask marking); `src/transparent_window.*` gained the hit mask and
 | click ripples | only on solid pixels (fish), plus airstone and fish turns | open water is `HTTRANSPARENT`, so Windows never delivers those clicks; pretending otherwise would need a click-through override |
 | `--day-cycle <minutes>` | not built; `night` follows the local hour unless `--night`/Ctrl+Shift+T pins it | dumps must stay deterministic, and a slow cycle needs a story about resume-from-sleep for little gain |
 | `[aquascape]` keys (`sand_y`, `rock_count`, …) | present in the INI; defaults ship tuned | the panel is honest: editing them rebuilds plate + masks together |
+| no coral in the plan | five seeded species (`Branch/Fan/Brain/Kelp/Polyp`) plus `coral_count` and **Add a random coral** | the plate read as empty sand; corals are the cheapest way to make it a tank, and they reuse the rock rules (mask-clipped, shared outline, palette-only) |
 | 8–16 airstone bubbles | **8** | more overlapped at 600×340 and read as a white smudge |
 | named presets in a `water\` folder | one `water.ini` beside the executable, `--water-preset <path>` for alternates | no preset browser means nothing to auto-save; the menu can rewrite the file from defaults |
 
@@ -487,11 +497,11 @@ before compositing so a crossing never lights the desktop to full opacity;
 
 | Metric | Value |
 | --- | --- |
-| static light build (15 Hz, 4 threads) | 6.3–7.2 ms → ~1.7 ms/frame amortised |
+| static light build (15 Hz, 4 threads) | 6.5–7.5 ms → ~1.8 ms/frame amortised |
 | 60 Hz composite | 4.5–4.7 ms |
-| frame cost, water only | ~6.3 ms |
-| ghost alpha, mean over the tank | 17.3 % |
-| ghost alpha, mean over open water | 10.0 % |
+| frame cost, water only | ~6.4 ms |
+| ghost alpha, mean over the tank | 18.0 % (18.7 % with all 24 corals) |
+| ghost alpha, mean over open water | 9.8 % |
 | highlights above 40 % of open water | 0.01 % |
 | `--water off` at seed 99, clock frozen | `51E5EF7C…` — byte-identical to the pre-water build |
 

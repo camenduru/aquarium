@@ -1,6 +1,6 @@
 # Aquarium
 
-> **1.3 sextillion sea creatures, no third-party DLLs, in 811 KB.**
+> **1.3 sextillion sea creatures, no third-party DLLs, in 836 KB.**
 
 https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
 
@@ -134,19 +134,20 @@ alpha, which a Direct3D swap chain on an `HWND` cannot provide at all.
 ## Water
 
 The tank can be read as a tank instead of as fish on a desktop: a low-alpha
-**ghost** water body, a procedural sand bed with rock silhouettes, caustics on
-the sand, a foam line at the surface, ripple rings, and an airstone bubble
-column. It is on by default; `--water off` is today's aquarium, and the dump at
-a fixed seed is byte-identical to the pre-water build.
+**ghost** water body, a procedural sand bed with rock silhouettes and a reef of
+corals, plants and polyps, caustics on the sand, a foam line at the surface,
+ripple rings, and an airstone bubble column. It is on by default; `--water off`
+is today's aquarium, and the dump at a fixed seed is byte-identical to the
+pre-water build.
 
 Everything is still generated in code - there is no PNG loader and no asset
-folder. The sand, gravel dither, rock silhouettes and the front rock are
-rasterised from one seeded `AquascapeSpec`, so the plate and the water masks
-cannot drift apart:
+folder. The sand, gravel dither, rock silhouettes, the front rock and every
+coral are rasterised from one seeded `AquascapeSpec`, so the plate and the water
+masks cannot drift apart:
 
 ```
 window canvas   1200x680, premultiplied BGRA, UpdateLayeredWindow
-  logical        600x340 straight RGBA content (sand + rock + fish)
+  logical        600x340 straight RGBA content (sand + rock + corals + fish)
   water          600x340 composite: refraction, tint, caustics, foam,
                  ripples, bubbles, then one exact 2x integer upscale
 ```
@@ -156,12 +157,13 @@ Pixel-art discipline is enforced, not implied: the water is evaluated at
 pixels, a bent sample that leaves the water falls back to the un-bent one, and
 every logical pixel lands as an exact 2x2 block. `tools/check_water.py` asserts
 that block grid, the premultiplied invariant, containment inside the water mask,
-determinism, and the ghost alpha budget (measured 17 % mean over the tank).
+determinism, and the ghost alpha budget (measured 18 % mean over the tank, 18.7 %
+with all 24 corals).
 
 Cost at 1200x680: the slow light field (caustics, foam, depth tint) is rebuilt
-at 15 Hz across worker threads (~6.5 ms per build, ~1.7 ms amortised), and the
-60 Hz pass overlays ripples, bubbles and the content composite (~4.6 ms), so the
-water is about **6.3 ms/frame**.
+at 15 Hz across worker threads (~6.5-7.5 ms per build with the reef, ~1.8 ms
+amortised), and the 60 Hz pass overlays ripples, bubbles and the content
+composite (~4.6 ms), so the water is about **6.4 ms/frame**.
 
 Click-through survives because the click test uses a **hit mask** written only
 by fish, not the canvas alpha: water pixels are `HTTRANSPARENT` and the desktop
@@ -183,10 +185,44 @@ ghost_alpha = 0.5
 [aquascape]
 sand_y = 0.86
 rock_count = 4
+coral_count = 9
 ```
 
 Invalid or out-of-range values are reported and the previous value is kept.
-Changing an `[aquascape]` key rebuilds the sand, rock and masks together.
+Changing an `[aquascape]` key rebuilds the sand, rock, coral and masks together.
+
+### Corals
+
+The reef is procedural, not a texture atlas. Each coral is a small **genome**
+- kind, size, lean, curl, branchiness, hue and a detail seed - drawn into a
+tone mask and then blitted with one shared 1 px outline, exactly like the rocks
+share their palette. There are five kinds, weighted so branching and fans
+dominate:
+
+| kind | reads as |
+| --- | --- |
+| `Branch` | staghorn: a thick trunk splitting three levels into bright tips |
+| `Fan` | a filled sea fan with radial ribs and a scissored rim |
+| `Brain` | a low wavy-groove dome sitting on the sand |
+| `Kelp` | two to four ribbons, dark on one edge, light on the other |
+| `Polyp` | a mound with a crown of fingers in the complementary hue |
+
+Corals are **plate art**: they paint only inside the water mask, never touch the
+fish hit mask, and live under the same ghost tint as the sand. Placement comes
+from the coral's index and the aquascape seed, walking the width by the golden
+angle, so **adding a coral never moves the ones already there** - the same rule
+the fish use for a new individual. Colours walk a curated reef palette (pink,
+orange, yellow, green, teal, blue, violet) and each coral's tips are the
+complement of its body, which is what makes a polyp or a branch end read at
+600x340.
+
+`coral_count` (0-24) seeds the reef; the default is 9. There are three ways to
+change it:
+
+- **Right-click a fish -> Add a random coral** appends one (session only, like
+  adding a fish; the menu entry greys out at 24).
+- `--corals N` overrides the count for this run, including dumps.
+- Edit `coral_count` in `water.ini`; a reload rebuilds the plate and masks.
 
 ## How many creatures can be generated
 
@@ -266,15 +302,17 @@ or, without CMake (MSVC only):
 bin/aquarium.exe
 ```
 
-The release build is one self-contained **811 KB** executable (`830,464 bytes`)
+The release build is one self-contained **836 KB** executable (`856,064 bytes`)
 with no third-party DLLs, no runtime install and no assets folder - the 1.3
-sextillion creatures, the sand and the rocks are all generated inside it.
+sextillion creatures, the sand, the rocks and the reef are all generated inside
+it.
 
 ## Run
 
 ```
 aquarium.exe                      # 1200x680, bottom-right of the work area, 1 fish
 aquarium.exe --fish 12 --seed 99
+aquarium.exe --corals 16          # seed the reef with 16 corals, plants and polyps
 aquarium.exe --width 1600 --height 900
 aquarium.exe --seconds 20         # auto-close (for checks)
 aquarium.exe --dump-frame out/frame.png --fish 6   # headless: no window, writes a PNG
@@ -300,6 +338,11 @@ Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
 animal is generated on a worker thread and appears in place, while the rest of
 the tank keeps swimming. It stops at 128 fish (`kMaxTankFish`), where the entry
 greys out. Every added fish is a fresh random individual.
+
+**Add a random coral** grows the reef the same way: one new seeded coral,
+plant or polyp appears on the sand and the ones already there keep their place.
+It stops at 24 (`kMaxCorals`), and like the fish it is session-only - use
+`coral_count` in `water.ini` to keep a reef.
 
 **Full screen on this monitor** resizes the layered window to the monitor's full
 bounds. Because the aquarium is chrome-less and click-through per pixel, the

@@ -158,8 +158,9 @@ const SpecFloatDef kSpecFloats[] = {
 };
 
 const SpecIntDef kSpecInts[] = {
-    { "rock_count", &AquascapeSpec::rockCount, 0, 14 },
-    { "margin",     &AquascapeSpec::margin,    2, 40 },
+    { "rock_count",  &AquascapeSpec::rockCount,  0, 14 },
+    { "coral_count", &AquascapeSpec::coralCount, 0, kMaxCorals },
+    { "margin",      &AquascapeSpec::margin,     2, 40 },
 };
 
 std::string Trim(const std::string& s)
@@ -503,13 +504,14 @@ bool WriteIni(const std::string& path, const WaterTuning& tuning,
     }
 
     file << "\n[aquascape]\n"
-            "; the sand plate and the water masks are built from these together\n";
+            "; the sand, rocks, corals and water masks are built from these together\n";
     file << "seed = " << spec.seed << "\n";
     file << "sand_y = " << spec.sandY << "\n";
     file << "sand_curve = " << spec.sandCurve << "\n";
     file << "rock_count = " << spec.rockCount << "\n";
     file << "rock_scale = " << spec.rockScale << "\n";
     file << "front_rock = " << (spec.frontRock ? 1 : 0) << "\n";
+    file << "coral_count = " << spec.coralCount << "\n";
     file << "margin = " << spec.margin << "\n";
 
     if (!file)
