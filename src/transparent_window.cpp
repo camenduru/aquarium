@@ -180,10 +180,28 @@ void TransparentWindow::Push()
     UpdateLayeredWindow(hwnd_, nullptr, &dstPt, &size, dc_, &srcPt, 0, &bf, ULW_ALPHA);
 }
 
+void TransparentWindow::SetHitMask(const uint8_t* mask, int width, int height, int scale)
+{
+    hitMask_  = mask;
+    hitW_     = width;
+    hitH_     = height;
+    hitScale_ = std::max(scale, 1);
+}
+
 bool TransparentWindow::OpaqueAt(int clientX, int clientY, int threshold) const
 {
-    if (bits_ == nullptr) return false;
     if (clientX < 0 || clientY < 0 || clientX >= w_ || clientY >= h_) return false;
+
+    if (hitMask_ != nullptr && hitW_ > 0 && hitH_ > 0)
+    {
+        const int mx = clientX / hitScale_;
+        const int my = clientY / hitScale_;
+        if (mx < hitW_ && my < hitH_)
+            return hitMask_[size_t(my) * size_t(hitW_) + size_t(mx)] != 0;
+        return false;
+    }
+
+    if (bits_ == nullptr) return false;
     const int a = bits_[(size_t(clientY) * size_t(w_) + size_t(clientX)) * 4 + 3];
     return a >= threshold;
 }
@@ -222,6 +240,15 @@ LRESULT CALLBACK TransparentWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, 
         POINT screen = p;
         ClientToScreen(hwnd, &screen);
         self->onRightClick(screen.x, screen.y);
+        return 0;
+    }
+    case WM_LBUTTONUP:
+    {
+        // Only delivered for HTCLIENT pixels, i.e. on something solid - a
+        // fish or a rock. Clicking open water passes straight through.
+        if (self == nullptr || !self->onLeftClick) break;
+        POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        self->onLeftClick(p.x, p.y);
         return 0;
     }
     case WM_HOTKEY:

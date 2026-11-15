@@ -60,11 +60,18 @@ public:
     /// Push the canvas to the screen. One call per frame.
     void Push();
 
+    /// A separate, binary hit mask at `scale` times reduced resolution.
+    /// When set, the click test uses it instead of the canvas alpha, so a
+    /// translucent water body never captures clicks meant for the desktop.
+    /// The pointer is borrowed and must outlive the window.
+    void SetHitMask(const uint8_t* mask, int width, int height, int scale);
+
     /// True when the canvas pixel is solid enough to belong to the aquarium.
     bool OpaqueAt(int clientX, int clientY, int threshold = 8) const;
 
     // Filled in by the app.
     std::function<void(int screenX, int screenY)> onRightClick;
+    std::function<void(int clientX, int clientY)> onLeftClick;
     std::function<void(int id)> onHotkey;
 
 private:
@@ -79,4 +86,12 @@ private:
     int      h_ = 0;
     int      x_ = 0;
     int      y_ = 0;
+
+    // Borrowed hit mask: one byte per logical pixel, `hitScale_` window
+    // pixels per entry. Null means "fall back to the canvas alpha", which is
+    // what the pre-water build did.
+    const uint8_t* hitMask_ = nullptr;
+    int            hitW_    = 0;
+    int            hitH_    = 0;
+    int            hitScale_ = 1;
 };

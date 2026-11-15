@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -74,6 +75,16 @@ public:
     void Update(double dt);
     void Draw(uint8_t* premultipliedBgra, int width, int height);
 
+    /// Draw into a straight-alpha logical canvas (half the window size) for
+    /// the water composite. `hit` receives one byte per logical pixel and is
+    /// set only on fish, so the window's hit test can ignore the water.
+    void DrawLogical(uint8_t* straightRgba, int logicalW, int logicalH, uint8_t* hit) const;
+
+    /// A turn emits a ripple. Window pixels; the caller converts to logical
+    /// space. Rate-limited inside the tank so a crowded tank cannot flood
+    /// the 16 ripple slots.
+    std::function<void(double x, double y, double amplitude)> onRipple;
+
     int  FishCount() const { return int(fish_.size()); }
     int  ReadyCount();
     bool WaitAllReady(int timeoutMs);
@@ -83,6 +94,7 @@ private:
     void WorkerRange(int first, int count, bool randomSpecies, sea::u64 randomSeed,
                      const std::vector<const char*>* presets);
     void AdoptPending();
+    void EmitRipple(const TankFish& f);
 
     std::vector<TankFish> fish_;
     std::vector<std::unique_ptr<sea::SeaSheet>> pending_;
@@ -101,4 +113,7 @@ private:
     /// The preset pool shuffled once per launch, so a new tank opens with a
     /// random pick instead of the same list order every time.
     std::vector<const char*> startOrder_;
+
+    /// Seconds until the next turn may emit a ripple.
+    double rippleCooldown_ = 0.0;
 };

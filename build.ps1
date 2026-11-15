@@ -44,6 +44,10 @@ $Args2 = @(
     (Resolve-Path src/main.cpp).Path,
     (Resolve-Path src/tank.cpp).Path,
     (Resolve-Path src/transparent_window.cpp).Path,
+    (Resolve-Path src/water/Aquascape.cpp).Path,
+    (Resolve-Path src/water/WaterLayer.cpp).Path,
+    (Resolve-Path src/water/WaterMasks.cpp).Path,
+    (Resolve-Path src/water/WaterTuning.cpp).Path,
     (Resolve-Path src/creature/CreatureSheetExport.cpp).Path
 ) + $Sea + @(
     '/link','/SUBSYSTEM:WINDOWS','user32.lib','gdi32.lib','shell32.lib'

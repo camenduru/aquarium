@@ -1,6 +1,6 @@
 # Aquarium
 
-> **1.3 sextillion sea creatures, no third-party DLLs, in 665 KB.**
+> **1.3 sextillion sea creatures, no third-party DLLs, in 811 KB.**
 
 https://github.com/user-attachments/assets/0dfa0eb4-cff2-4cc4-9f15-9afc67cd37de
 
@@ -26,7 +26,7 @@ WS_EX_NOACTIVATE     never steals focus from the app you are working in
 WS_EX_TOPMOST        floats above other windows
 ```
 
-Every frame:
+Every frame, with the water off:
 
 1. `Clear()` the `CreateDIBSection` canvas to transparent.
 2. `BlendSprite()` each fish cell into it as **premultiplied** BGRA
@@ -34,10 +34,15 @@ Every frame:
    requires premultiplied colour; skipping it leaves a halo.
 3. `UpdateLayeredWindow(..., ULW_ALPHA)`, 60 fps.
 
+With the water on the same canvas is filled by one composite over a
+half-resolution scene layer instead ([Water](#water)).
+
 `WS_EX_TRANSPARENT` is deliberately **not** set: that would make the whole
 window click-through, fish included. `WM_NCHITTEST` answers `HTTRANSPARENT` for
-a transparent canvas pixel and `HTCLIENT` for a fish pixel, so the desktop keeps
-its clicks and a fish can still be right-clicked.
+a transparent pixel and `HTCLIENT` for a fish pixel, so the desktop keeps its
+clicks and a fish can still be right-clicked. A separate **hit mask** decides
+that, not the canvas alpha, because the water layer deliberately draws
+translucent pixels over most of the window ([Water](#water)).
 
 ## Fish
 
@@ -109,18 +114,79 @@ Premultiplying matters: `UpdateLayeredWindow` with `AC_SRC_ALPHA` expects
 premultiplied colour, and feeding it straight alpha is what puts a bright halo
 around every sprite.
 
+With the water on, the same walk goes through `Tank::DrawLogical`: one cell per
+fish, unscaled, into the 600x340 straight-alpha content buffer (destination
+`lround(x/2) - 32`), and the water composite premultiplies and upscales it once.
+
 ### 3. The screen: once per frame, by Windows
 
 `Push()` hands the finished bitmap to `UpdateLayeredWindow(..., ULW_ALPHA)` at
 60 fps and the Desktop Window Manager composites it over the desktop. Because
 transparent pixels carry no colour at all, the desktop shows through them; the
-same alpha channel decides clicks, since `WM_NCHITTEST` answers `HTTRANSPARENT`
-below an alpha of 8 and `HTCLIENT` on anything more solid.
+hit mask (not the alpha channel) decides clicks, since `WM_NCHITTEST` answers
+`HTTRANSPARENT` over water and `HTCLIENT` on a fish.
 
 Cost is CPU cycles per pixel touched, not GPU time: one fish at 2x covers
 128x128 = 16,384 pixels, so a 128-fish tank is about **2.1 million pixel blends
 per frame**. That is the budget this design spends in exchange for per-pixel
 alpha, which a Direct3D swap chain on an `HWND` cannot provide at all.
+
+## Water
+
+The tank can be read as a tank instead of as fish on a desktop: a low-alpha
+**ghost** water body, a procedural sand bed with rock silhouettes, caustics on
+the sand, a foam line at the surface, ripple rings, and an airstone bubble
+column. It is on by default; `--water off` is today's aquarium, and the dump at
+a fixed seed is byte-identical to the pre-water build.
+
+Everything is still generated in code - there is no PNG loader and no asset
+folder. The sand, gravel dither, rock silhouettes and the front rock are
+rasterised from one seeded `AquascapeSpec`, so the plate and the water masks
+cannot drift apart:
+
+```
+window canvas   1200x680, premultiplied BGRA, UpdateLayeredWindow
+  logical        600x340 straight RGBA content (sand + rock + fish)
+  water          600x340 composite: refraction, tint, caustics, foam,
+                 ripples, bubbles, then one exact 2x integer upscale
+```
+
+Pixel-art discipline is enforced, not implied: the water is evaluated at
+**half resolution** on pixel centres, refraction is quantised to whole logical
+pixels, a bent sample that leaves the water falls back to the un-bent one, and
+every logical pixel lands as an exact 2x2 block. `tools/check_water.py` asserts
+that block grid, the premultiplied invariant, containment inside the water mask,
+determinism, and the ghost alpha budget (measured 17 % mean over the tank).
+
+Cost at 1200x680: the slow light field (caustics, foam, depth tint) is rebuilt
+at 15 Hz across worker threads (~6.5 ms per build, ~1.7 ms amortised), and the
+60 Hz pass overlays ripples, bubbles and the content composite (~4.6 ms), so the
+water is about **6.3 ms/frame**.
+
+Click-through survives because the click test uses a **hit mask** written only
+by fish, not the canvas alpha: water pixels are `HTTRANSPARENT` and the desktop
+keeps its clicks. `tools/probe_window.ps1` samples a 48x27 grid with
+`WM_NCHITTEST` and asserts that only a fish-sized fraction is `HTCLIENT`.
+
+### Tuning
+
+Every knob is a `key = value` line in `water.ini`, next to `aquarium.exe`
+(`bin\water.ini` in a source build), which is written with comments on first
+run. The keys are the [pixel-art-water-vfx](#credits) demo's own IDs, so its
+documentation applies here. Edit the file and the running tank picks it up
+within half a second (or press `Ctrl+Shift+R`); there is no settings window.
+
+```
+[water]
+clarity = 0.65
+ghost_alpha = 0.5
+[aquascape]
+sand_y = 0.86
+rock_count = 4
+```
+
+Invalid or out-of-range values are reported and the previous value is kept.
+Changing an `[aquascape]` key rebuilds the sand, rock and masks together.
 
 ## How many creatures can be generated
 
@@ -200,9 +266,9 @@ or, without CMake (MSVC only):
 bin/aquarium.exe
 ```
 
-The release build is one self-contained **665 KB** executable (`680,960 bytes`)
+The release build is one self-contained **811 KB** executable (`830,464 bytes`)
 with no third-party DLLs, no runtime install and no assets folder - the 1.3
-sextillion creatures are all generated inside it.
+sextillion creatures, the sand and the rocks are all generated inside it.
 
 ## Run
 
@@ -212,6 +278,12 @@ aquarium.exe --fish 12 --seed 99
 aquarium.exe --width 1600 --height 900
 aquarium.exe --seconds 20         # auto-close (for checks)
 aquarium.exe --dump-frame out/frame.png --fish 6   # headless: no window, writes a PNG
+
+aquarium.exe --water off          # fish on a bare desktop, no water, no sand
+aquarium.exe --water-preset my.ini --water-set caustic_strength=0.4
+aquarium.exe --water-restore-defaults             # rewrite water.ini from defaults
+aquarium.exe --night 1 --clock 12 # pin the light instead of following the hour
+aquarium.exe --dump-frame f.png --dump-layers out/layer   # also dump content/masks/raw
 ```
 
 Hotkeys (global, work while another app has focus):
@@ -220,6 +292,9 @@ Hotkeys (global, work while another app has focus):
 | --- | --- |
 | `Ctrl+Shift+Q` | quit |
 | `Ctrl+Shift+N` | new tank (new seed) |
+| `Ctrl+Shift+R` | reload `water.ini` |
+| `Ctrl+Shift+W` | water on / off |
+| `Ctrl+Shift+T` | night on / off |
 
 Right-clicking a fish opens the same menu, plus **Add a random fish**: one extra
 animal is generated on a worker thread and appears in place, while the rest of
@@ -239,9 +314,13 @@ new monitor; otherwise it re-centres at the same windowed size, clamped to fit.
 With a single monitor the entry is greyed out.
 
 `tools/probe_window.ps1` reads the layered/topmost/visible styles back out of
-Windows, so the transparency setup can be verified rather than assumed.
+Windows and samples a `WM_NCHITTEST` grid, so the transparency and hit-testing
+setup can be verified rather than assumed. `tools/check_water.py` runs the
+headless dump and checks the water layer's pixel invariants and alpha budget.
 
 ## Credits
 
 - Fish generator: [fish-gen](https://github.com/JacobKulberg/fish-gen) (MIT) as ported to `RoguelikeGame/src/creature/sea`.
 - Transparent-window recipe: [VRMPet](https://github.com/camenduru/VRMPet).
+- Water effect: reimplemented from **pixel-art-water-vfx** (Godot 4, no licence
+  shipped) - its design document and parameter semantics, not its shader text.

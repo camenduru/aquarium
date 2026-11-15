@@ -7,17 +7,28 @@
 //
 // Window mode:
 //   aquarium.exe [--fish N] [--seed N] [--width W] [--height H] [--seconds S]
-//   Ctrl+Shift+Q quits, Ctrl+Shift+N builds a new tank, right-click a fish
-//   for the same menu.
+//                [--water off|ghost] [--water-preset path] [--water-set k=v]
+//                [--water-restore-defaults] [--night 0|1] [--clock S]
+//   Ctrl+Shift+Q quits, Ctrl+Shift+N builds a new tank, Ctrl+Shift+R reloads
+//   water.ini, Ctrl+Shift+W toggles the water, Ctrl+Shift+T toggles night.
+//   Right-click a fish for the same menu.
+//   water.ini lives next to the executable; a missing one is written from the
+//   current defaults, so tuning needs no settings window.
 //
 // Headless mode (for checks and screenshots - no window at all):
 //   aquarium.exe --dump-frame out/frame.png [--seconds S] [--fish N]
+//                [--dump-layers out/layer]
 // ================================================================
 
 #include "transparent_window.h"
 #include "tank.h"
 
 #include "creature/CreatureSheetExport.h"
+#include "water/Aquascape.h"
+#include "water/RipplePool.h"
+#include "water/WaterLayer.h"
+#include "water/WaterMasks.h"
+#include "water/WaterTuning.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -27,8 +38,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -39,6 +52,40 @@ constexpr const wchar_t* kWindowTitle = L"Aquarium";
 
 Tank              g_tank;
 TransparentWindow g_window;
+
+// ---- water ------------------------------------------------------
+enum class WaterMode { Off, Ghost };
+
+WaterMode g_waterMode = WaterMode::Ghost;   // ghost ships; see the plan §6.1
+
+water::WaterTuning   g_tuning;
+water::AquascapeSpec g_spec;
+water::WaterPalette  g_palette;
+water::WaterMasks    g_masks;
+water::Aquascape     g_aquascape;
+water::WaterLayer    g_water;
+water::RipplePool    g_ripples;
+
+int                  g_logicalW = 0;
+int                  g_logicalH = 0;
+std::vector<uint8_t> g_content;   // straight-alpha RGBA, logical resolution
+std::vector<uint8_t> g_hit;       // one byte per logical pixel, fish only
+
+std::string g_iniPath;
+struct FileStamp
+{
+    FILETIME write{};
+    bool     valid = false;
+};
+FileStamp g_iniStamp;
+bool      g_haveIni = false;
+
+std::vector<std::pair<std::string, std::string>> g_overrides;
+double g_clock      = 0.0;
+float  g_night      = 0.0f;
+bool   g_nightAuto  = true;
+double g_airstoneTimer = 0.4;
+
 /// A fresh seed at every launch, so each app open fills the tank with
 /// different fish. `--seed N` still overrides it for reproducible runs.
 sea::u64 FreshSeed()
@@ -57,6 +104,67 @@ int               g_monitor   = 0;     // the screen the tank lives on
 bool              g_fullscreen = false;
 int               g_windowedW = 1200;  // size to come back to when un-fullscreening
 int               g_windowedH = 680;
+
+// ---- small path helpers -----------------------------------------
+std::string Narrow(const wchar_t* wide)
+{
+    if (wide == nullptr) return {};
+    const int len = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return {};
+    std::string s(size_t(len - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide, -1, s.data(), len, nullptr, nullptr);
+    return s;
+}
+
+std::wstring Widen(const std::string& utf8)
+{
+    if (utf8.empty()) return {};
+    const int len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    if (len <= 1) return {};
+    std::wstring s(size_t(len - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, s.data(), len);
+    return s;
+}
+
+std::string ConfigPath()
+{
+    // water.ini sits next to the executable. A self-contained program should
+    // not scatter files into the user profile, and the file that tunes the
+    // aquarium is easiest to find beside the aquarium.
+    wchar_t buffer[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    std::string path = (n > 0 && n < MAX_PATH) ? Narrow(buffer) : std::string();
+
+    const size_t slash = path.find_last_of("\\/");
+    path.resize(slash == std::string::npos ? 0 : slash + 1);
+    return path + "water.ini";
+}
+
+bool FileExists(const std::string& path)
+{
+    const DWORD attrs = GetFileAttributesW(Widen(path).c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+bool ReadStamp(const std::string& path, FileStamp& out)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data = {};
+    if (!GetFileAttributesExW(Widen(path).c_str(), GetFileExInfoStandard, &data))
+    {
+        out = FileStamp{};
+        return false;
+    }
+    out.write = data.ftLastWriteTime;
+    out.valid = true;
+    return true;
+}
+
+bool StampChanged(const FileStamp& a, const FileStamp& b)
+{
+    return a.valid != b.valid
+        || a.write.dwLowDateTime  != b.write.dwLowDateTime
+        || a.write.dwHighDateTime != b.write.dwHighDateTime;
+}
 
 std::vector<std::string> CommandLineArgs()
 {
@@ -78,6 +186,13 @@ std::vector<std::string> CommandLineArgs()
 
 void AttachParentConsole()
 {
+    // When stdout has already been redirected to a file or a pipe (a check
+    // script), writing to it is exactly what is wanted: attaching to the
+    // parent console would send the text somewhere invisible instead.
+    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out != nullptr && out != INVALID_HANDLE_VALUE && GetFileType(out) != FILE_TYPE_UNKNOWN)
+        return;
+
     if (AttachConsole(ATTACH_PARENT_PROCESS) == FALSE) return;
     FILE* f = nullptr;
     freopen_s(&f, "CONOUT$", "w", stdout);
@@ -117,6 +232,145 @@ int MonitorIndexAt(int x, int y)
     return 0;   // a gap between differently sized screens, or off-screen
 }
 
+// ---- water setup -------------------------------------------------
+
+bool SameSpec(const water::AquascapeSpec& a, const water::AquascapeSpec& b)
+{
+    return a.seed      == b.seed
+        && a.sandY     == b.sandY
+        && a.sandCurve == b.sandCurve
+        && a.rockCount == b.rockCount
+        && a.rockScale == b.rockScale
+        && a.frontRock == b.frontRock
+        && a.margin    == b.margin;
+}
+
+/// Build (or rebuild) everything that depends on the logical resolution.
+void PrepareWater(int width, int height)
+{
+    g_logicalW = (width + 1) / 2;
+    g_logicalH = (height + 1) / 2;
+
+    g_masks.Build(g_logicalW, g_logicalH, g_spec);
+    g_aquascape.Build(g_logicalW, g_logicalH, g_spec, g_masks);
+    g_water.Resize(g_logicalW, g_logicalH);
+    g_water.SetInputs(&g_tuning, &g_palette, &g_masks, &g_ripples);
+
+    g_content.assign(size_t(g_logicalW) * size_t(g_logicalH) * 4, 0);
+    g_hit.assign(size_t(g_logicalW) * size_t(g_logicalH), 0);
+
+    // Water pixels never claim a click: only the fish buffer does.
+    if (g_waterMode == WaterMode::Ghost)
+        g_window.SetHitMask(g_hit.data(), g_logicalW, g_logicalH, 2);
+    else
+        g_window.SetHitMask(nullptr, 0, 0, 1);
+}
+
+void ApplyOverrides()
+{
+    for (const std::pair<std::string, std::string>& kv : g_overrides)
+    {
+        std::string error;
+        if (!water::ApplySetting(kv.first, kv.second, g_tuning, g_spec, error))
+            std::printf("aquarium: --water-set %s=%s: %s\n",
+                        kv.first.c_str(), kv.second.c_str(), error.c_str());
+    }
+}
+
+void RebuildAquascape()
+{
+    if (g_logicalW < 8 || g_logicalH < 8) return;
+    g_masks.Build(g_logicalW, g_logicalH, g_spec);
+    g_aquascape.Build(g_logicalW, g_logicalH, g_spec, g_masks);
+    g_water.InvalidateStatic();
+}
+
+/// Read water.ini (if present), then re-apply the command line overrides on
+/// top so a hot reload can never silently discard a flag.
+void ReloadWater(bool announce)
+{
+    const water::WaterTuning   before     = g_tuning;
+    const water::AquascapeSpec specBefore = g_spec;
+
+    if (!g_iniPath.empty() && FileExists(g_iniPath))
+    {
+        water::IniReport report;
+        const bool ok = water::LoadIni(g_iniPath, g_tuning, g_spec, report);
+        for (const std::string& e : report.errors)
+            std::printf("aquarium: %s\n", e.c_str());
+        g_haveIni = true;
+        ReadStamp(g_iniPath, g_iniStamp);
+
+        if (announce)
+            std::printf("aquarium: water.ini: %d setting(s) applied, %d rejected (%s)\n",
+                        int(report.applied.size()), int(report.errors.size()),
+                        ok ? "ok" : "with errors");
+    }
+
+    ApplyOverrides();
+    water::BuildPalette(g_tuning, g_palette);
+
+    // Absorb a ripple-speed edit so rings already on the water keep their
+    // radius instead of jumping (the demo's phase-offset trick).
+    if (g_tuning.rippleSpeed != before.rippleSpeed)
+        g_ripples.Compensate(before.rippleSpeed, g_tuning.rippleSpeed, g_clock);
+
+    if (!SameSpec(specBefore, g_spec))
+        RebuildAquascape();
+    else
+        g_water.InvalidateStatic();
+}
+
+void WriteWaterTemplate()
+{
+    if (g_iniPath.empty()) return;
+    std::string error;
+    if (!water::WriteIni(g_iniPath, g_tuning, g_spec, error))
+        std::printf("aquarium: %s\n", error.c_str());
+    else
+        std::printf("aquarium: wrote %s\n", g_iniPath.c_str());
+    ReadStamp(g_iniPath, g_iniStamp);
+    g_haveIni = true;
+}
+
+/// Local time to a 0..1 night value: dark from 21:00 to 06:00, ramping over
+/// two hours at each end, so the tank follows the desktop's own lighting.
+float NightNow()
+{
+    SYSTEMTIME st = {};
+    GetLocalTime(&st);
+    const double hour = double(st.wHour) + double(st.wMinute) / 60.0;
+
+    double t = 0.0;
+    if (hour >= 21.0 || hour < 6.0)      t = 1.0;
+    else if (hour >= 19.0)               t = (hour - 19.0) / 2.0;
+    else if (hour < 8.0)                 t = (8.0 - hour) / 2.0;
+    return float(std::clamp(t, 0.0, 1.0));
+}
+
+/// The airstone's own ripple, on a drifting timer so it never looks metronomic.
+void TickAirstone(double dt)
+{
+    if (!g_tuning.waterfallEnabled || !g_masks.Valid()) return;
+    g_airstoneTimer -= dt;
+    if (g_airstoneTimer > 0.0) return;
+    g_airstoneTimer = 0.85 + 0.5 * std::fmod(g_clock * 0.6180339887, 1.0);
+    g_ripples.Add(g_masks.AirstoneX(), g_masks.AirstoneY(), g_clock, 0.4f);
+}
+
+/// Plate, fish, front rock - in that order, into the straight-alpha logical
+/// canvas the water composite refracts.
+void BuildContent()
+{
+    if (g_content.empty()) return;
+    std::fill(g_content.begin(), g_content.end(), uint8_t(0));
+    std::fill(g_hit.begin(), g_hit.end(), uint8_t(0));
+
+    g_aquascape.DrawBack(g_content.data());
+    g_tank.DrawLogical(g_content.data(), g_logicalW, g_logicalH, g_hit.data());
+    g_aquascape.DrawFront(g_content.data());
+}
+
 // Remembers the windowed size so leaving full screen returns to it rather than
 // to whatever the monitor happened to be.
 void ResizeTankTo(int width, int height, int x, int y)
@@ -124,6 +378,7 @@ void ResizeTankTo(int width, int height, int x, int y)
     if (!g_window.Resize(width, height, x, y))
         return;
     g_tank.Resize(width, height);
+    PrepareWater(width, height);
     if (!g_fullscreen)
     {
         g_windowedW = width;
@@ -182,6 +437,29 @@ void RestartTank(int width, int height)
     g_tank.Start(width, height, g_seed, g_fish);
 }
 
+/// Manual night override, shared by the menu and the hotkey so the two can
+/// never disagree about what "night" means.
+void ToggleNight()
+{
+    g_nightAuto = false;
+    g_night = g_night > 0.5f ? 0.0f : 1.0f;
+    std::printf("aquarium: night %.2f\n", g_night);
+}
+
+void SetWater(WaterMode mode)
+{
+    g_waterMode = mode;
+    g_ripples.Reset();
+    g_airstoneTimer = 0.4;
+
+    if (mode == WaterMode::Ghost)
+        PrepareWater(g_window.Width(), g_window.Height());
+    else
+        g_window.SetHitMask(nullptr, 0, 0, 1);
+
+    std::printf("aquarium: water %s\n", mode == WaterMode::Ghost ? "ghost" : "off");
+}
+
 // Premultiplied BGRA (the layered-window canvas) -> straight RGBA (PNG).
 std::vector<unsigned char> ToStraightRgba(const std::vector<unsigned char>& bgra, size_t& solidOut)
 {
@@ -204,29 +482,125 @@ std::vector<unsigned char> ToStraightRgba(const std::vector<unsigned char>& bgra
     return rgba;
 }
 
-int DumpFrame(const std::string& path, int width, int height, int seconds)
+/// Write the intermediate layers a check needs: the straight-alpha content
+/// (plate + fish + front rock) and the masks that drive the water.
+void DumpLayers(const std::string& prefix, const std::vector<uint8_t>& canvas,
+                int width, int height)
 {
+    if (prefix.empty()) return;
+
+    if (!g_content.empty())
+    {
+        const std::string path = prefix + "-content.png";
+        const bool ok = creature::WritePngFile(g_content.data(), g_logicalW, g_logicalH, path);
+        std::printf("aquarium: layer content %dx%d -> %s (%s)\n",
+                    g_logicalW, g_logicalH, path.c_str(), ok ? "ok" : "FAILED");
+    }
+
+    if (g_masks.Valid())
+    {
+        std::vector<uint8_t> rgba(g_masks.Pixels(),
+                                  g_masks.Pixels() + size_t(g_masks.Width()) * size_t(g_masks.Height()) * 4);
+        for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;
+        const std::string path = prefix + "-masks.png";
+        const bool ok = creature::WritePngFile(rgba.data(), g_masks.Width(), g_masks.Height(), path);
+        std::printf("aquarium: layer masks %dx%d -> %s (%s)\n",
+                    g_masks.Width(), g_masks.Height(), path.c_str(), ok ? "ok" : "FAILED");
+    }
+
+    size_t solid = 0;
+    const std::vector<unsigned char> straight = ToStraightRgba(canvas, solid);
+    const std::string path = prefix + "-frame.png";
+    const bool ok = creature::WritePngFile(straight.data(), width, height, path);
+    std::printf("aquarium: layer frame %dx%d -> %s (%s)\n",
+                width, height, path.c_str(), ok ? "ok" : "FAILED");
+
+    // The premultiplied canvas as it is handed to UpdateLayeredWindow. A raw
+    // dump is the only way to check "no channel exceeds alpha" after the
+    // conversion the PNG writer does.
+    const std::string rawPath = prefix + "-raw.bgra";
+    if (FILE* raw = nullptr; fopen_s(&raw, rawPath.c_str(), "wb") == 0 && raw != nullptr)
+    {
+        fwrite(canvas.data(), 1, canvas.size(), raw);
+        fclose(raw);
+        std::printf("aquarium: layer raw %dx%d -> %s\n", width, height, rawPath.c_str());
+    }
+}
+
+int DumpFrame(const std::string& path, int width, int height, int seconds,
+              const std::string& layers)
+{
+    g_ripples.Reset();
     g_tank.Start(width, height, g_seed, g_fish);
     const bool ready = g_tank.WaitAllReady(300000);
     if (!ready)
         std::printf("aquarium: only %d of %d sheets generated\n",
                     g_tank.ReadyCount(), g_tank.FishCount());
 
+    const int steps = std::max(1, seconds) * 30;
     const double dt = 1.0 / 30.0;
-    for (int i = 0; i < std::max(1, seconds) * 30; ++i)
-        g_tank.Update(dt);
 
+    if (g_waterMode == WaterMode::Off)
+    {
+        // The legacy path, byte for byte: no logical canvas, no water.
+        for (int i = 0; i < steps; ++i)
+            g_tank.Update(dt);
+
+        std::vector<unsigned char> canvas(size_t(width) * size_t(height) * 4, 0);
+        g_tank.Draw(canvas.data(), width, height);
+
+        size_t solid = 0;
+        const std::vector<unsigned char> rgba = ToStraightRgba(canvas, solid);
+        const bool ok = creature::WritePngFile(rgba.data(), width, height, path);
+        const double cover = 100.0 * double(solid) / double(size_t(width) * size_t(height));
+
+        std::printf("aquarium: dump %dx%d, %d/%d fish, %.2f%% covered -> %s (%s)\n",
+                    width, height, g_tank.ReadyCount(), g_tank.FishCount(), cover,
+                    path.c_str(), ok ? "ok" : "FAILED");
+        g_tank.Stop();
+        return ok ? 0 : 3;
+    }
+
+    PrepareWater(width, height);
     std::vector<unsigned char> canvas(size_t(width) * size_t(height) * 4, 0);
-    g_tank.Draw(canvas.data(), width, height);
+
+    for (int i = 0; i < steps; ++i)
+    {
+        g_tank.Update(dt);
+        g_clock += dt;
+        TickAirstone(dt);
+    }
+
+    BuildContent();
+    // forceStatic: a dump must not inherit whatever the last 30 Hz tick cached.
+    g_water.Composite(g_content.data(), canvas.data(), width, height, 2,
+                      g_clock, g_night, true);
+    // A second call 1/60 s later measures the steady-state frame: the static
+    // buffer is still fresh, so this is the per-frame cost.
+    g_water.Composite(g_content.data(), canvas.data(), width, height, 2,
+                      g_clock + 1.0 / 60.0, g_night, false);
+    g_clock += 1.0 / 60.0;
 
     size_t solid = 0;
     const std::vector<unsigned char> rgba = ToStraightRgba(canvas, solid);
     const bool ok = creature::WritePngFile(rgba.data(), width, height, path);
     const double cover = 100.0 * double(solid) / double(size_t(width) * size_t(height));
 
-    std::printf("aquarium: dump %dx%d, %d/%d fish, %.2f%% covered -> %s (%s)\n",
-                width, height, g_tank.ReadyCount(), g_tank.FishCount(), cover,
-                path.c_str(), ok ? "ok" : "FAILED");
+    std::printf("aquarium: dump %dx%d (%dx%d logical), %d/%d fish, %.2f%% covered, "
+                "water %s, clock %.2f s, night %.2f -> %s (%s)\n",
+                width, height, g_logicalW, g_logicalH,
+                g_tank.ReadyCount(), g_tank.FishCount(), cover,
+                g_waterMode == WaterMode::Ghost ? "ghost" : "off",
+                g_clock, g_night, path.c_str(), ok ? "ok" : "FAILED");
+
+    const water::WaterLayer::Stats& stats = g_water.LastStats();
+    std::printf("aquarium: water static %.2f ms (%d px, rebuilt at 15 Hz), "
+                "composite %.2f ms, %d ripple(s), ~%.1f ms/frame\n",
+                stats.staticMs, stats.staticPixels, stats.compositeMs, stats.activeRipples,
+                stats.staticMs * 0.25 + stats.compositeMs);
+
+    DumpLayers(layers, canvas, width, height);
+
     g_tank.Stop();
     return ok ? 0 : 3;
 }
@@ -234,8 +608,21 @@ int DumpFrame(const std::string& path, int width, int height, int seconds)
 void Step(double dt)
 {
     g_tank.Update(dt);
+    g_clock += dt;
+    if (g_nightAuto) g_night = NightNow();
+
     g_window.Clear();
-    g_tank.Draw(g_window.Pixels(), g_window.Width(), g_window.Height());
+    if (g_waterMode == WaterMode::Ghost && g_water.Valid() && !g_content.empty())
+    {
+        TickAirstone(dt);
+        BuildContent();
+        g_water.Composite(g_content.data(), g_window.Pixels(),
+                          g_window.Width(), g_window.Height(), 2, g_clock, g_night);
+    }
+    else
+    {
+        g_tank.Draw(g_window.Pixels(), g_window.Width(), g_window.Height());
+    }
     g_window.Push();
 }
 
@@ -253,6 +640,13 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     AppendMenuW(menu, MF_STRING, 1, L"New tank  (Ctrl+Shift+N)");
     AppendMenuW(menu, MF_STRING | (canAdd ? 0u : MF_GRAYED), 2, L"Add a random fish");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (g_waterMode == WaterMode::Ghost ? MF_CHECKED : 0u), 6,
+                L"Water  (Ctrl+Shift+W)");
+    AppendMenuW(menu, MF_STRING | (g_night > 0.5f ? MF_CHECKED : 0u), 8,
+                L"Night  (Ctrl+Shift+T)");
+    AppendMenuW(menu, MF_STRING, 7, L"Reload water.ini  (Ctrl+Shift+R)");
+    AppendMenuW(menu, MF_STRING, 9, L"Write water.ini template");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_fullscreen ? MF_CHECKED : 0u), 4,
                 L"Full screen on this monitor");
     AppendMenuW(menu, MF_STRING | (multiMonitor ? 0u : MF_GRAYED), 5, L"Swap monitor");
@@ -267,15 +661,21 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     if (cmd == 1)
         RestartTank(g_window.Width(), g_window.Height());
     else if (cmd == 2)
-    {
         g_tank.AddFish();
-    }
     else if (cmd == 3)
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
     else if (cmd == 4)
         ToggleFullscreen();
     else if (cmd == 5)
         CycleMonitor();
+    else if (cmd == 6)
+        SetWater(g_waterMode == WaterMode::Ghost ? WaterMode::Off : WaterMode::Ghost);
+    else if (cmd == 7)
+        ReloadWater(true);
+    else if (cmd == 8)
+        ToggleNight();
+    else if (cmd == 9)
+        WriteWaterTemplate();
 }
 
 } // namespace
@@ -285,7 +685,12 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     int width = 1200;
     int height = 680;
     std::string dumpPath;
+    std::string layerPrefix;
+    std::string presetPath;
     bool dump = false;
+    bool explicitNight = false;
+    bool restoreDefaults = false;
+    bool waterOff = false;
 
     const std::vector<std::string> args = CommandLineArgs();
     for (size_t i = 0; i < args.size(); ++i)
@@ -294,23 +699,80 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         auto take = [&](std::string& out) { if (i + 1 < args.size()) out = args[++i]; };
         std::string v;
         if (a == "--dump-frame")      { take(v); dumpPath = v; dump = true; }
+        else if (a == "--dump-layers"){ take(v); layerPrefix = v; }
         else if (a == "--seconds")    { take(v); g_seconds = std::atoi(v.c_str()); }
         else if (a == "--fish")       { take(v); g_fish = std::atoi(v.c_str()); }
         else if (a == "--seed")       { take(v); g_seed = (sea::u64)std::strtoull(v.c_str(), nullptr, 10); }
         else if (a == "--width")      { take(v); width = std::atoi(v.c_str()); }
         else if (a == "--height")     { take(v); height = std::atoi(v.c_str()); }
+        else if (a == "--water")
+        {
+            take(v);
+            if (v == "off")       waterOff = true;
+            else if (v == "ghost") waterOff = false;
+            else std::printf("aquarium: --water: expected off|ghost, got '%s'\n", v.c_str());
+        }
+        else if (a == "--water-preset") { take(presetPath); }
+        else if (a == "--water-set")
+        {
+            take(v);
+            const size_t eq = v.find('=');
+            if (eq == std::string::npos)
+                std::printf("aquarium: --water-set expects key=value, got '%s'\n", v.c_str());
+            else
+                g_overrides.emplace_back(v.substr(0, eq), v.substr(eq + 1));
+        }
+        else if (a == "--water-restore-defaults") { restoreDefaults = true; }
+        else if (a == "--night")
+        {
+            take(v);
+            explicitNight = true;
+            g_nightAuto   = false;
+            g_night       = (v == "0" || v == "off" || v == "false") ? 0.0f : 1.0f;
+        }
+        else if (a == "--clock")
+        {
+            take(v);
+            g_clock = std::atof(v.c_str());
+        }
     }
     g_fish = std::clamp(g_fish, 1, kMaxTankFish);
     width  = std::max(width, 320);
     height = std::max(height, 240);
+
+    g_waterMode = waterOff ? WaterMode::Off : WaterMode::Ghost;
+    g_iniPath   = presetPath.empty() ? ConfigPath() : presetPath;
 
     if (dump || g_seconds > 0)
         AttachParentConsole();
 
     SetProcessDPIAware();
 
+    if (restoreDefaults)
+    {
+        g_tuning = water::WaterTuning{};
+        g_spec   = water::AquascapeSpec{};
+        g_overrides.clear();
+        WriteWaterTemplate();
+    }
+    else if (!FileExists(g_iniPath))
+    {
+        // Ship an editable template rather than a settings window: the first
+        // run leaves a fully commented file behind for the user to tune.
+        WriteWaterTemplate();
+    }
+    ReloadWater(false);
+
+    // A dump is a check: same seed, same clock, same picture. The wall clock
+    // must therefore not leak into it unless --night says so.
+    if ((dump || g_seconds > 0) && !explicitNight)
+    {
+        g_nightAuto = false;
+        g_night     = 0.0f;
+    }
+
     if (dump)
-        return DumpFrame(dumpPath, width, height, std::max(g_seconds, 6));
+        return DumpFrame(dumpPath, width, height, std::max(g_seconds, 6), layerPrefix);
 
     // Bottom-right of the work area, small margin - the same placement rule
     // VRMPet uses for its overlay.
@@ -335,29 +797,59 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     g_monitor = MonitorIndexAt(posX, posY);
     std::printf("aquarium: %d monitor(s), on monitor %d\n", int(g_monitors.size()), g_monitor);
 
+    // Fish ripples: the tank reports window pixels, the water works in
+    // logical space.
+    g_tank.onRipple = [](double x, double y, double amplitude)
+    {
+        if (g_waterMode != WaterMode::Ghost) return;
+        g_ripples.Add(float(x * 0.5), float(y * 0.5), g_clock, float(amplitude));
+    };
+
     g_window.onHotkey = [](int id)
     {
         if (id == 1)
             PostMessageW(g_window.Hwnd(), WM_CLOSE, 0, 0);
         else if (id == 2)
             RestartTank(g_window.Width(), g_window.Height());
+        else if (id == 3)
+            ReloadWater(true);
+        else if (id == 4)
+            SetWater(g_waterMode == WaterMode::Ghost ? WaterMode::Off : WaterMode::Ghost);
+        else if (id == 5)
+            ToggleNight();
     };
     g_window.onRightClick = [](int sx, int sy)
     {
         ShowMenu(g_window.Hwnd(), sx, sy);
     };
+    g_window.onLeftClick = [](int cx, int cy)
+    {
+        // Only delivered on solid pixels (a fish). The ripple spreads from
+        // the click, which is the demo's pointer event, kept.
+        if (g_waterMode != WaterMode::Ghost) return;
+        g_ripples.Add(float(cx) * 0.5f, float(cy) * 0.5f, g_clock, 0.8f);
+    };
 
+    // Ctrl+Shift rather than the plan's F5: WS_EX_NOACTIVATE means the window
+    // never has focus, so a plain F5 could never reach it.
     RegisterHotKey(g_window.Hwnd(), 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'Q');
     RegisterHotKey(g_window.Hwnd(), 2, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'N');
+    RegisterHotKey(g_window.Hwnd(), 3, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'R');
+    RegisterHotKey(g_window.Hwnd(), 4, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'W');
+    RegisterHotKey(g_window.Hwnd(), 5, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'T');
+
+    PrepareWater(width, height);
 
     g_window.Show();
     g_tank.Start(width, height, g_seed, g_fish);
     g_start = std::chrono::steady_clock::now();
     auto last = g_start;
 
-    std::printf("aquarium: %dx%d at %d,%d, %d fish, seed %llu\n", width, height,
-                posX, posY, g_fish, (unsigned long long)g_seed);
+    std::printf("aquarium: %dx%d at %d,%d, %d fish, seed %llu, water %s, ini %s\n",
+                width, height, posX, posY, g_fish, (unsigned long long)g_seed,
+                g_waterMode == WaterMode::Ghost ? "ghost" : "off", g_iniPath.c_str());
 
+    double pollTimer = 0.5;
     bool running = true;
     while (running)
     {
@@ -380,13 +872,32 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         last = now;
         Step(dt);
 
+        // Edits to water.ini show up without a settings window: one stat()
+        // every half second, no file watcher.
+        pollTimer -= dt;
+        if (pollTimer <= 0.0)
+        {
+            pollTimer = 0.5;
+            if (g_haveIni)
+            {
+                FileStamp stamp;
+                if (ReadStamp(g_iniPath, stamp) && StampChanged(stamp, g_iniStamp))
+                    ReloadWater(true);
+            }
+        }
+
+        // A redirected stdout is block buffered, so a log tail would show
+        // nothing until exit. One flush per frame keeps live diagnostics
+        // (hot reloads, hotkeys) visible while the aquarium runs.
+        std::fflush(stdout);
+
         if (g_seconds > 0 &&
             std::chrono::duration<double>(now - g_start).count() >= double(g_seconds))
             running = false;
     }
 
-    UnregisterHotKey(g_window.Hwnd(), 1);
-    UnregisterHotKey(g_window.Hwnd(), 2);
+    for (int id = 1; id <= 5; ++id)
+        UnregisterHotKey(g_window.Hwnd(), id);
     const int ready = g_tank.ReadyCount();
     const int total = g_tank.FishCount();
     g_tank.Stop();

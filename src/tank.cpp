@@ -249,6 +249,8 @@ void Tank::Update(double dt)
 
     AdoptPending();
 
+    rippleCooldown_ = std::max(0.0, rippleCooldown_ - dt);
+
     for (TankFish& f : fish_)
     {
         if (!f.ready) continue;
@@ -281,6 +283,7 @@ void Tank::Update(double dt)
                 f.turning = true;
                 f.clock = 0.0;
                 f.frame = 0;
+                EmitRipple(f);
             }
             else if (f.dir < 0 && f.x < margin)
             {
@@ -288,6 +291,7 @@ void Tank::Update(double dt)
                 f.turning = true;
                 f.clock = 0.0;
                 f.frame = 0;
+                EmitRipple(f);
             }
         }
 
@@ -321,5 +325,44 @@ void Tank::Draw(uint8_t* canvas, int width, int height)
                     f.sheet.rgba.data(), f.sheet.width, f.sheet.height,
                     sx, sy, cell, cell,
                     dstX, dstY, f.scale, f.alpha);
+    }
+}
+
+void Tank::EmitRipple(const TankFish& f)
+{
+    if (!onRipple || rippleCooldown_ > 0.0) return;
+    rippleCooldown_ = 0.18;
+    onRipple(f.x, f.y, 0.55);
+}
+
+void Tank::DrawLogical(uint8_t* canvas, int logicalW, int logicalH, uint8_t* hit) const
+{
+    if (canvas == nullptr || logicalW < 1 || logicalH < 1) return;
+
+    // Fish coordinates stay in window pixels: update, seeding and the turn
+    // margins are all expressed there. Only the blit is converted, so a fish
+    // is drawn at exactly the same place it always was - one logical pixel
+    // is two window pixels.
+    for (const TankFish& f : fish_)
+    {
+        if (!f.ready || f.sheet.rgba.empty() || f.sheet.size < 1) continue;
+
+        const ClipView c    = LookupClip(f.sheet, f.clip);
+        const int      cell = f.sheet.size;
+        const int      cols = f.sheet.width / cell;
+        if (cols < 1) continue;
+
+        const int col = std::clamp(f.frame, 0, cols - 1);
+        const int sx  = col * cell;
+        const int sy  = c.row * cell;
+        if (sx + cell > f.sheet.width || sy + cell > f.sheet.height) continue;
+
+        const int dstX = int(std::lround(f.x * 0.5)) - cell / 2;
+        const int dstY = int(std::lround(f.y * 0.5)) - cell / 2;
+
+        BlendSpriteLogical(canvas, logicalW, logicalH,
+                           f.sheet.rgba.data(), f.sheet.width, f.sheet.height,
+                           sx, sy, cell, cell,
+                           dstX, dstY, f.alpha, hit);
     }
 }

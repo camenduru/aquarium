@@ -24,6 +24,10 @@ add_executable(aquarium WIN32
     src/main.cpp
     src/tank.cpp
     src/transparent_window.cpp
+    src/water/Aquascape.cpp
+    src/water/WaterLayer.cpp
+    src/water/WaterMasks.cpp
+    src/water/WaterTuning.cpp
     src/creature/CreatureSheetExport.cpp
     ${SEA_SOURCES}
 )
