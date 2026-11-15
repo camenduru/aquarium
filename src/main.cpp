@@ -547,18 +547,11 @@ void BuildContent()
 }
 
 // Remembers the windowed size so leaving full screen returns to it rather than
-// to whatever the monitor happened to be.
+// to whatever the monitor happened to be. The tank and the water follow through
+// onClientResize, so a menu action and an edge drag take exactly the same path.
 void ResizeTankTo(int width, int height, int x, int y)
 {
-    if (!g_window.Resize(width, height, x, y))
-        return;
-    g_tank.Resize(width, height);
-    PrepareWater(width, height);
-    if (!g_fullscreen)
-    {
-        g_windowedW = width;
-        g_windowedH = height;
-    }
+    g_window.Resize(width, height, x, y);
 }
 
 // Full screen here means "the monitor's full bounds", not the work area: the
@@ -582,19 +575,32 @@ void CenterOnMonitor(int index, int width, int height)
                  int(r.top)  + (monitorH - h) / 2);
 }
 
+/// The monitor the tank is on right now. A windowed tank can be dragged to
+/// another screen, so "the monitor it started on" is not good enough for the
+/// two actions that fill or leave one.
+int MonitorNow()
+{
+    RefreshMonitors();
+    g_monitor = MonitorIndexAt(g_window.X(), g_window.Y());
+    if (g_monitor >= int(g_monitors.size()))
+        g_monitor = 0;
+    return g_monitor;
+}
+
 void ToggleFullscreen()
 {
     g_fullscreen = !g_fullscreen;
     if (g_fullscreen)
-        FillMonitor(g_monitor);
+        FillMonitor(MonitorNow());
     else
-        CenterOnMonitor(g_monitor, g_windowedW, g_windowedH);
+        CenterOnMonitor(MonitorNow(), g_windowedW, g_windowedH);
 }
 
 void CycleMonitor()
 {
     if (g_monitors.size() < 2) return;
-    g_monitor = (g_monitor + 1) % int(g_monitors.size());
+    const int from = MonitorNow();
+    g_monitor = (from + 1) % int(g_monitors.size());
 
     if (g_fullscreen)
         FillMonitor(g_monitor);
@@ -876,9 +882,15 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
     AppendMenuW(menu, MF_STRING | (FileExists(TankPath()) ? 0u : MF_GRAYED), 12,
                 L"Load tank  (Ctrl+Shift+L)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (g_fullscreen ? MF_CHECKED : 0u), 4,
+    AppendMenuW(menu, MF_STRING | (g_fullscreen ? MF_CHECKED : 0u)
+                     | (g_window.Windowed() ? MF_GRAYED : 0u), 4,
                 L"Full screen on this monitor");
     AppendMenuW(menu, MF_STRING | (multiMonitor ? 0u : MF_GRAYED), 5, L"Swap monitor");
+    // Windowed is how the tank gets moved and resized: every pixel becomes
+    // grabbable, an edge resizes. The two exclude each other - a window you can
+    // drag is not filling a monitor, and a full-screen one has no edge to pull.
+    AppendMenuW(menu, MF_STRING | (g_window.Windowed() ? MF_CHECKED : 0u)
+                     | (g_fullscreen ? MF_GRAYED : 0u), 14, L"Windowed");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 3, L"Quit  (Ctrl+Shift+Q)");
 
@@ -897,6 +909,17 @@ void ShowMenu(HWND hwnd, int screenX, int screenY)
         ToggleFullscreen();
     else if (cmd == 5)
         CycleMonitor();
+    else if (cmd == 14)
+    {
+        // No resize, no rebuild: the tank keeps its size, it just becomes
+        // grabbable (or stops being). The outline and the cursor are the
+        // window's business.
+        const bool on = !g_window.Windowed();
+        if (g_window.SetWindowed(on))
+            std::printf("aquarium: %s\n",
+                        on ? "windowed - drag the tank to move it, drag an edge to resize"
+                           : "overlay - click-through again");
+    }
     else if (cmd == 6)
         SetWater(g_waterMode == WaterMode::Ghost ? WaterMode::Off : WaterMode::Ghost);
     else if (cmd == 7)
@@ -944,6 +967,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     bool explicitNight = false;
     bool restoreDefaults = false;
     bool waterOff = false;
+    bool startWindowed = false;
 
     const std::vector<std::string> args = CommandLineArgs();
     for (size_t i = 0; i < args.size(); ++i)
@@ -979,6 +1003,7 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
                 g_overrides.emplace_back(v.substr(0, eq), v.substr(eq + 1));
         }
         else if (a == "--water-restore-defaults") { restoreDefaults = true; }
+        else if (a == "--windowed") { startWindowed = true; }
         else if (a == "--night")
         {
             take(v);
@@ -1120,6 +1145,18 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
         if (g_waterMode != WaterMode::Ghost) return;
         g_ripples.Add(float(cx) * 0.5f, float(cy) * 0.5f, g_clock, 0.8f);
     };
+    g_window.onClientResize = [](int w, int h)
+    {
+        // The canvas is a new size - a menu action or the user pulling an edge
+        // in windowed mode - so everything drawn in it has to be rebuilt.
+        g_tank.Resize(w, h);
+        PrepareWater(w, h);
+        if (!g_fullscreen)
+        {
+            g_windowedW = w;
+            g_windowedH = h;
+        }
+    };
 
     // Ctrl+Shift rather than the plan's F5: WS_EX_NOACTIVATE means the window
     // never has focus, so a plain F5 could never reach it.
@@ -1133,6 +1170,11 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     RegisterHotKey(g_window.Hwnd(), 8, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'A');
 
     PrepareWater(width, height);
+
+    // Before Show(), so the frame is in place on the first paint rather than
+    // appearing on a tank that has already been drawn as an overlay.
+    if (startWindowed)
+        g_window.SetWindowed(true);
 
     g_window.Show();
     StartTank(width, height);

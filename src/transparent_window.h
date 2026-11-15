@@ -45,6 +45,19 @@ public:
     HWND Hwnd() const { return hwnd_; }
     int Width() const { return w_; }
     int Height() const { return h_; }
+    int X() const { return x_; }
+    int Y() const { return y_; }
+
+    /// Windowed mode: the tank becomes grabbable. There is no system frame -
+    /// per-pixel alpha means UpdateLayeredWindow owns the whole window surface,
+    /// so a WS_CAPTION would be applied to the geometry and never painted - so
+    /// windowed means "every pixel belongs to the tank": a press inside drags
+    /// it, a press within kEdge of an edge resizes it, the cursor says which,
+    /// and a thin border shows where the edges are. The window stays
+    /// WS_EX_NOACTIVATE and topmost throughout, so grabbing it never steals
+    /// focus from the app you are working in.
+    bool SetWindowed(bool on);
+    bool Windowed() const { return windowed_; }
 
     /// Premultiplied BGRA canvas, top-down rows, cleared to fully transparent.
     uint8_t* Pixels() { return bits_; }
@@ -73,10 +86,29 @@ public:
     std::function<void(int screenX, int screenY)> onRightClick;
     std::function<void(int clientX, int clientY)> onLeftClick;
     std::function<void(int id)> onHotkey;
+    /// The user dragged the frame to a new client size. The canvas is already
+    /// that size when this fires; the app has to rebuild what is drawn in it.
+    std::function<void(int clientW, int clientH)> onClientResize;
 
 private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static TransparentWindow* From(HWND hwnd);
+
+    /// New DIB + DC at this size, old ones dropped. Keeps the window and the
+    /// canvas the same size in one place, since both Resize() and an edge drag
+    /// end up here.
+    bool RebuildCanvas(int width, int height);
+
+    /// Which edges a client point is within kEdge of: 1 left, 2 right, 4 top,
+    /// 8 bottom, 0 for the interior. Corners are two bits.
+    int EdgeAt(int clientX, int clientY) const;
+
+    /// The 1px outline drawn while windowed, so the edges are visible.
+    void DrawBorder();
+
+    static constexpr int kEdge = 8;     // grab margin, client pixels
+    static constexpr int kMinW = 320;
+    static constexpr int kMinH = 240;
 
     HWND     hwnd_ = nullptr;
     HDC      dc_   = nullptr;
@@ -94,4 +126,15 @@ private:
     int            hitW_    = 0;
     int            hitH_    = 0;
     int            hitScale_ = 1;
+
+    // Windowed mode: the tank is grabbable. `edge_` is the grab the press
+    // started on, `dragRect_` the window rect at that moment, so a resize is
+    // always computed from where the drag began rather than accumulated.
+    bool  windowed_ = false;
+    bool  dragging_ = false;
+    bool  resizing_ = false;
+    int   edge_     = 0;
+    RECT  dragRect_ = {};
+    POINT dragOrigin_ = { 0, 0 };   // pointer at the press, screen pixels
+    POINT grab_       = { 0, 0 };   // pointer -> window offset, screen pixels
 };

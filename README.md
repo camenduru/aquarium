@@ -472,6 +472,7 @@ aquarium.exe --seconds 20         # auto-close (for checks)
 aquarium.exe --dump-frame out/frame.png --fish 6   # headless: no window, writes a PNG
 
 aquarium.exe --water off          # fish on a bare desktop, no water, no sand
+aquarium.exe --windowed           # grabbable: drag to move, edges to resize
 aquarium.exe --water-preset my.ini --water-set caustic_strength=0.4
 aquarium.exe --water-restore-defaults             # rewrite water.ini from defaults
 aquarium.exe --night 1 --clock 12 # pin the light instead of following the hour
@@ -518,6 +519,22 @@ sorted left-to-right (then top-to-bottom), so the order is predictable rather
 than whatever order the display driver reports. While full screen it fills the
 new monitor; otherwise it re-centres at the same windowed size, clamped to fit.
 With a single monitor the entry is greyed out.
+
+**Windowed** makes the tank grabbable. There is no title bar and no border to
+pull, and there cannot be one: a per-pixel-alpha layered window has no
+system-drawn non-client area - `UpdateLayeredWindow` owns the whole window
+surface, so `WS_CAPTION` would change the geometry and paint nothing. Windowed
+is therefore a behaviour rather than a frame. While it is on, every pixel of the
+tank belongs to the tank instead of the desktop, so a press inside drags it and
+a press within 8 px of an edge resizes that edge (or the two edges of a corner),
+computed from where the drag began so a clamped step cannot make it drift. The
+cursor becomes a four-way arrow inside and a double arrow on an edge, a 1 px
+outline shows where the edges are, and the tank will not go below 320x240. The
+window stays topmost and `WS_EX_NOACTIVATE` throughout, so grabbing it never
+steals focus from what you are working in. A resize rebuilds the sand, reef and
+water at the new size; turning Windowed off returns to per-pixel click-through,
+where water passes clicks to the desktop again. Windowed and full screen exclude
+each other, so each greys the other out.
 
 `tools/probe_window.ps1` reads the layered/topmost/visible styles back out of
 Windows and samples a `WM_NCHITTEST` grid, so the transparency and hit-testing
