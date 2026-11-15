@@ -213,6 +213,14 @@ by fish, not the canvas alpha: water pixels are `HTTRANSPARENT` and the desktop
 keeps its clicks. `tools/probe_window.ps1` samples a 48x27 grid with
 `WM_NCHITTEST` and asserts that only a fish-sized fraction is `HTCLIENT`.
 
+A **right**-press is the one exception. The menu has to be reachable from the
+water, not only from a fish, so while the right button is down the water body
+answers `HTCLIENT` too - `WM_NCHITTEST` is asked where the press landed after
+the button went down, so `GetAsyncKeyState(VK_RBUTTON)` tells the two apart.
+A left-press still returns `HTTRANSPARENT` and still belongs to the desktop;
+only a right-click on the water opens the tank's menu, with "Remove this fish"
+greyed out because the pointer is on open water.
+
 ### Tuning
 
 Every knob is a `key = value` line in `water.ini`, next to `aquarium.exe`

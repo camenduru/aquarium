@@ -29,6 +29,19 @@
 #include <cstdint>
 #include <functional>
 
+/// Does a click at this pixel belong to the tank?
+///
+/// A solid pixel always does. The water body deliberately does NOT - that is
+/// what lets the desktop keep its left clicks - but a right-press must still
+/// reach the menu, so the water takes the click while the right button is down.
+/// Split out as a pure rule because the interesting cases are the two booleans,
+/// not the window: a hit test that silently answers HTTRANSPARENT for the whole
+/// water body is a menu you cannot open.
+inline bool TankOwnsHit(bool solidPixel, bool waterBody, bool rightButtonDown)
+{
+    return solidPixel || (waterBody && rightButtonDown);
+}
+
 class TransparentWindow
 {
 public:
@@ -126,6 +139,10 @@ private:
     int            hitW_    = 0;
     int            hitH_    = 0;
     int            hitScale_ = 1;
+
+    /// True when a hit mask is installed, i.e. the ghost water body is on. The
+    /// water takes right-clicks (see TankOwnsHit) but not left ones.
+    bool waterBody_ = false;
 
     // Windowed mode: the tank is grabbable. `edge_` is the grab the press
     // started on, `dragRect_` the window rect at that moment, so a resize is

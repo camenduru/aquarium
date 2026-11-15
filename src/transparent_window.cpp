@@ -243,10 +243,11 @@ void TransparentWindow::Push()
 
 void TransparentWindow::SetHitMask(const uint8_t* mask, int width, int height, int scale)
 {
-    hitMask_  = mask;
-    hitW_     = width;
-    hitH_     = height;
-    hitScale_ = std::max(scale, 1);
+    hitMask_   = mask;
+    hitW_      = width;
+    hitH_      = height;
+    hitScale_  = std::max(scale, 1);
+    waterBody_ = mask != nullptr && width > 0 && height > 0;
 }
 
 bool TransparentWindow::OpaqueAt(int clientX, int clientY, int threshold) const
@@ -293,8 +294,16 @@ LRESULT CALLBACK TransparentWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, 
         if (self->windowed_) return HTCLIENT;
         POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ScreenToClient(hwnd, &p);
-        // A fish pixel belongs to the aquarium; everything else is desktop.
-        return self->OpaqueAt(p.x, p.y) ? HTCLIENT : HTTRANSPARENT;
+        // A fish pixel belongs to the aquarium. The water body does not, so the
+        // desktop keeps its left clicks - except while the right button is
+        // down, which is the one press the water has to take, or the menu would
+        // be unreachable from anywhere but a fish. The button is already down by
+        // the time the system asks where a press landed, so the real key state
+        // is what tells the two apart here.
+        const bool rightDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+        return TankOwnsHit(self->OpaqueAt(p.x, p.y), self->waterBody_, rightDown)
+                   ? HTCLIENT
+                   : HTTRANSPARENT;
     }
     case WM_SETCURSOR:
         if (self != nullptr && self->windowed_)

@@ -154,11 +154,6 @@ bool Save(const std::string& path, const TankSave& save, std::string& error)
         error = "too many fish for a save file";
         return false;
     }
-    if (int(save.creatures.size()) > kMaxTankFish)
-    {
-        error = "too many fish for a save file";
-        return false;
-    }
 
     const std::vector<std::string> header = {
         "aquarium tank save - water settings, aquascape and every fish",
@@ -187,6 +182,20 @@ bool Save(const std::string& path, const TankSave& save, std::string& error)
              << (c.dir >= 0 ? 1 : -1) << '|'
              << Num(c.bobPhase) << '|' << Num(c.bobAmp) << '|' << Num(c.bobSpeed) << '|'
              << std::clamp(c.alpha, 0, 255) << "\n";
+    }
+
+    // The window goes last, after [creatures], so everything above it stays a
+    // valid water.ini: --water-preset rejects unknown keys and [window] is not
+    // a water key. A headless run has no window, so it writes no section at
+    // all and a later load leaves the window where the process put it.
+    if (save.window.valid)
+    {
+        file << "\n[window]\n"
+                "; where the tank sat and how big it was, so a load puts it back\n";
+        file << "x = " << save.window.x << "\n";
+        file << "y = " << save.window.y << "\n";
+        file << "width = " << save.window.width << "\n";
+        file << "height = " << save.window.height << "\n";
     }
 
     if (!file)
@@ -232,9 +241,30 @@ bool Load(const std::string& path, TankSave& out, std::string& error)
     }
 
     const size_t headingEnd = text.find('\n', sectionStart);
+    const size_t bodyStart = headingEnd == std::string::npos ? text.size() : headingEnd + 1;
+
+    // [window] is written after [creatures], so look for it before parsing the
+    // fish: the fish loop only understands `key = value` and would report a
+    // heading as a line without an equals sign.
+    size_t windowStart = std::string::npos;
+    size_t windowBody = std::string::npos;
+    for (size_t at = bodyStart; at < text.size(); )
+    {
+        const size_t lineEnd = text.find('\n', at);
+        const size_t stop = lineEnd == std::string::npos ? text.size() : lineEnd;
+        if (Lower(Trim(text.substr(at, stop - at))) == "[window]")
+        {
+            windowStart = at;
+            windowBody = lineEnd == std::string::npos ? text.size() : lineEnd + 1;
+            break;
+        }
+        if (lineEnd == std::string::npos) break;
+        at = lineEnd + 1;
+    }
+
     const std::string head = text.substr(0, sectionStart);
-    const std::string tail = headingEnd == std::string::npos
-                           ? std::string() : text.substr(headingEnd + 1);
+    const std::string tail = text.substr(bodyStart, (windowStart == std::string::npos
+                                                   ? text.size() : windowStart) - bodyStart);
 
     water::IniReport report;
     if (!water::LoadIniText(path, head, out.tuning, out.spec, report))
@@ -244,6 +274,7 @@ bool Load(const std::string& path, TankSave& out, std::string& error)
     }
 
     out.creatures.clear();
+    out.window = WindowPlace{};
     long long declared = -1;
     std::istringstream lines{ tail };
     std::string line;
@@ -308,6 +339,64 @@ bool Load(const std::string& path, TankSave& out, std::string& error)
         error = msg.str();
         return false;
     }
+
+    // [window] is optional: a save from before the window was recorded has no
+    // section, and a load then leaves the window alone. When the section is
+    // there all four numbers are required, so a truncated file cannot half-place
+    // the tank at a position it never had.
+    if (windowBody != std::string::npos)
+    {
+        bool haveX = false, haveY = false, haveW = false, haveH = false;
+        std::istringstream wlines{ text.substr(windowBody) };
+        std::string wline;
+        int wlineNumber = 0;
+        while (std::getline(wlines, wline))
+        {
+            ++wlineNumber;
+            const std::string trimmed = Trim(wline);
+            if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') continue;
+
+            const size_t eq = trimmed.find('=');
+            if (eq == std::string::npos)
+            {
+                std::ostringstream msg;
+                msg << path << ": window line " << wlineNumber << ": expected key = value";
+                error = msg.str();
+                return false;
+            }
+
+            const std::string key = Trim(trimmed.substr(0, eq));
+            const std::string val = Trim(trimmed.substr(eq + 1));
+            const bool isPlace = key == "x" || key == "y";
+            const bool isSize  = key == "width" || key == "height";
+            if (!isPlace && !isSize)
+            {
+                error = path + ": unknown window key: " + key;
+                return false;
+            }
+
+            long long v = 0;
+            if (!ParseInt(val, v) || v < (isPlace ? -100000 : 1) || v > 100000)
+            {
+                error = path + ": " + key + (isSize ? ": expected 1-100000 px"
+                                                    : ": expected -100000 to 100000");
+                return false;
+            }
+
+            if (key == "x")      { out.window.x = int(v);      haveX = true; }
+            else if (key == "y") { out.window.y = int(v);      haveY = true; }
+            else if (key == "width")  { out.window.width = int(v);  haveW = true; }
+            else                 { out.window.height = int(v); haveH = true; }
+        }
+
+        if (!(haveX && haveY && haveW && haveH))
+        {
+            error = path + ": [window] needs x, y, width and height";
+            return false;
+        }
+        out.window.valid = true;
+    }
+
     return true;
 }
 

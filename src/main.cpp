@@ -117,6 +117,11 @@ bool              g_fullscreen = false;
 int               g_windowedW = 1200;  // size to come back to when un-fullscreening
 int               g_windowedH = 680;
 
+// Where a loaded tank says the window was. Held between the load and the point
+// the window exists (--load-tank runs before Create), and applied straight away
+// for a load from the menu, where the window is already up.
+tankfile::WindowPlace g_savedPlace;
+
 // ---- small path helpers -----------------------------------------
 std::string Narrow(const wchar_t* wide)
 {
@@ -416,6 +421,10 @@ void AddCoral()
     std::printf("aquarium: %d coral(s)\n", g_spec.coralCount);
 }
 
+/// Puts the window where a load says it belongs. Defined down with the rest of
+/// the window geometry; LoadTankFrom needs it before then.
+void ApplySavedPlace();
+
 /// Write the whole tank - water settings, aquascape and every fish - to one
 /// INI file. The save is the state right now, so it can be taken mid-swim.
 bool SaveTankTo(const std::string& path)
@@ -424,6 +433,17 @@ bool SaveTankTo(const std::string& path)
     save.tuning    = g_tuning;
     save.spec      = g_spec;
     save.creatures = g_tank.Snapshot();
+
+    // A headless run (--dump-frame, --save-tank) has no window, so it records
+    // no geometry and a later load leaves the window where the process put it.
+    if (g_window.Hwnd() != nullptr)
+    {
+        save.window.valid  = true;
+        save.window.x      = g_window.X();
+        save.window.y      = g_window.Y();
+        save.window.width  = g_window.Width();
+        save.window.height = g_window.Height();
+    }
 
     std::string error;
     if (!tankfile::Save(path, save, error))
@@ -434,6 +454,10 @@ bool SaveTankTo(const std::string& path)
 
     std::printf("aquarium: saved %d fish, %d coral(s) -> %s\n",
                 int(save.creatures.size()), g_spec.coralCount, path.c_str());
+    if (save.window.valid)
+        std::printf("aquarium: window %dx%d at %d,%d went into the save\n",
+                    save.window.width, save.window.height,
+                    save.window.x, save.window.y);
     return true;
 }
 
@@ -456,6 +480,10 @@ bool LoadTankFrom(const std::string& path)
     g_spawnLoaded    = true;
     g_fish           = int(save.creatures.size());
 
+    // The place belongs to the window, not to the water. A save without one
+    // clears it rather than inheriting the geometry of an earlier load.
+    g_savedPlace = save.window;
+
     // A saved tank that is loaded with --water-set still honours the flag;
     // the save only replaces the file it was written from.
     ApplyOverrides();
@@ -474,6 +502,10 @@ bool LoadTankFrom(const std::string& path)
     std::printf("aquarium: loaded %s: %d fish, %d coral(s), seed %llu\n",
                 path.c_str(), g_fish, g_spec.coralCount,
                 (unsigned long long)g_spec.seed);
+
+    // Last, because moving the window rebuilds the tank and the water: the fish
+    // are only queued here and come back at the new size from StartTank().
+    ApplySavedPlace();
     return true;
 }
 
@@ -554,6 +586,45 @@ void ResizeTankTo(int width, int height, int x, int y)
     g_window.Resize(width, height, x, y);
 }
 
+/// A saved rect, pulled back onto a screen that exists right now. The size is
+/// capped to the monitor the tank was on and the corner is kept inside it, so a
+/// save taken on a monitor that is no longer attached - or on a bigger screen -
+/// still opens where the user can see it, instead of at a coordinate that is no
+/// longer there.
+void PlaceSaved(int& width, int& height, int& x, int& y)
+{
+    RefreshMonitors();
+    const RECT& r = g_monitors[size_t(MonitorIndexAt(g_savedPlace.x, g_savedPlace.y))];
+    const int left = int(r.left), top = int(r.top);
+    const int right = int(r.right), bottom = int(r.bottom);
+
+    // clamp() with a high bound below the low one is undefined, so the bounds
+    // are made sane first: that is a monitor smaller than the smallest tank.
+    const int maxW = std::max(320, right - left);
+    const int maxH = std::max(240, bottom - top);
+    width  = std::clamp(g_savedPlace.width,  320, maxW);
+    height = std::clamp(g_savedPlace.height, 240, maxH);
+    x = std::clamp(g_savedPlace.x, left, std::max(left, right  - width));
+    y = std::clamp(g_savedPlace.y, top,  std::max(top,  bottom - height));
+}
+
+/// Put the window back where a load says it was. Does nothing when the save
+/// carried no geometry, and stays pending while the tank is full screen: there
+/// is no windowed place to put a full-screen tank in, so leaving full screen is
+/// what finally puts it there.
+void ApplySavedPlace()
+{
+    if (!g_savedPlace.valid || g_fullscreen) return;
+    if (g_window.Hwnd() == nullptr) return;   // startup: main() places it before Create
+
+    int w = g_savedPlace.width, h = g_savedPlace.height;
+    int x = g_savedPlace.x,     y = g_savedPlace.y;
+    PlaceSaved(w, h, x, y);
+    g_savedPlace.valid = false;   // one placement per load, not on every resize
+    ResizeTankTo(w, h, x, y);
+    std::printf("aquarium: window restored to %dx%d at %d,%d\n", w, h, x, y);
+}
+
 // Full screen here means "the monitor's full bounds", not the work area: the
 // tank is chrome-less and per-pixel click-through, so the taskbar underneath
 // keeps its clicks wherever there is no fish.
@@ -592,6 +663,8 @@ void ToggleFullscreen()
     g_fullscreen = !g_fullscreen;
     if (g_fullscreen)
         FillMonitor(MonitorNow());
+    else if (g_savedPlace.valid)
+        ApplySavedPlace();   // a load taken in full screen left a place pending
     else
         CenterOnMonitor(MonitorNow(), g_windowedW, g_windowedH);
 }
@@ -1080,8 +1153,20 @@ int WINAPI wWinMain(HINSTANCE /*inst*/, HINSTANCE /*prev*/, PWSTR /*cmd*/, int /
     const int waH = wa.bottom - wa.top;
     width  = std::min(width, std::max(320, waW - 80));
     height = std::min(height, std::max(240, waH - 80));
-    const int posX = wa.right - width - 40;
-    const int posY = wa.bottom - height - 40;
+    int posX = wa.right - width - 40;
+    int posY = wa.bottom - height - 40;
+
+    // Where the tank was when it was saved, if the save recorded it. Done here
+    // rather than inside LoadTankFrom because this runs before the window
+    // exists - and after a headless dump has returned, so a dump keeps exactly
+    // the size it was asked for.
+    if (g_savedPlace.valid)
+    {
+        PlaceSaved(width, height, posX, posY);
+        g_savedPlace.valid = false;
+        std::printf("aquarium: starting at %dx%d, %d,%d from the save\n",
+                    width, height, posX, posY);
+    }
 
     if (!g_window.Create(width, height, posX, posY, kClassName, kWindowTitle))
     {
