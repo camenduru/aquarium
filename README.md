@@ -523,6 +523,10 @@ With a single monitor the entry is greyed out.
 Windows and samples a `WM_NCHITTEST` grid, so the transparency and hit-testing
 setup can be verified rather than assumed. `tools/check_water.py` runs the
 headless dump and checks the water layer's pixel invariants and alpha budget.
+`tools/check_spawn_wiring.py` asserts that an added fish is built from the kind
+the weights drew rather than from its seed's own kind - a mismatch there is
+invisible in the save, the console and the API, and only shows as the wrong
+animal on screen (`tools/mutate_spawn_wiring.py` proves the check can fail).
 
 ## Credits
 

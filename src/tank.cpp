@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <random>
 
 namespace
@@ -339,8 +338,6 @@ void Tank::WorkerRange(int first, std::vector<CreatureJob> jobs)
         // so a restored tank reproduces the same sheet without re-deriving
         // either from the tank seed.
         const sea::SeaGenome genome = GenomeFor(jobs[size_t(n)].species, jobs[size_t(n)].seed);
-        std::printf("SPAWNCHK job='%s' -> genome %s\n",
-                    jobs[size_t(n)].species.c_str(), sea::KindId(genome.kind));
 
         sea::SeaSpriteOptions options;
         options.size       = kCell;
